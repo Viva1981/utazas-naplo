@@ -72,9 +72,10 @@ export async function GET(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const redirectUrl = hit.webContentLink
-    ? hit.webContentLink
-    : `https://drive.google.com/uc?export=download&id=${fileId}`;
+  const isImage = (hit.mimeType || "").toLowerCase().startsWith("image/");
+const redirectUrl = isImage
+  ? `https://drive.google.com/uc?export=view&id=${fileId}`
+  : (hit.webContentLink ? hit.webContentLink : `https://drive.google.com/uc?export=download&id=${fileId}`);
 
-  return NextResponse.redirect(redirectUrl, { status: 302 });
+return NextResponse.redirect(redirectUrl, { status: 302 });
 }

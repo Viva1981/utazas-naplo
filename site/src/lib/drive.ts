@@ -188,3 +188,53 @@ export async function driveEnsureParent(
   }
   return true;
 }
+export async function driveSetAnyoneReader(accessToken: string, fileId: string) {
+  const url = `https://www.googleapis.com/drive/v3/files/${fileId}/permissions?supportsAllDrives=true&fields=id`;
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ role: "reader", type: "anyone", allowFileDiscovery: false }),
+  });
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => "<no body>");
+    console.error("DRIVE set anyone reader FAILED", { status: resp.status, body: txt });
+    throw new Error(`driveSetAnyoneReader failed: ${resp.status} ${txt}`);
+  }
+  return true;
+}
+
+export async function driveGetParents(accessToken: string, fileId: string) {
+  const url = `https://www.googleapis.com/drive/v3/files/${fileId}?fields=parents&supportsAllDrives=true`;
+  const resp = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => "<no body>");
+    console.error("DRIVE get parents FAILED", { status: resp.status, body: txt });
+    throw new Error(`driveGetParents failed: ${resp.status} ${txt}`);
+  }
+  const j = (await resp.json()) as { parents?: string[] };
+  return j.parents ?? [];
+}
+
+export async function driveEnsureParent(accessToken: string, fileId: string, targetParentId: string) {
+  const parents = await driveGetParents(accessToken, fileId);
+  if (parents.includes(targetParentId)) return true;
+
+  const removeParents = parents.join(",");
+  const url = `https://www.googleapis.com/drive/v3/files/${fileId}?addParents=${encodeURIComponent(
+    targetParentId
+  )}${removeParents ? `&removeParents=${encodeURIComponent(removeParents)}` : ""}&supportsAllDrives=true&fields=id,parents`;
+
+  const resp = await fetch(url, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => "<no body>");
+    console.error("DRIVE ensure parent FAILED", { status: resp.status, body: txt });
+    throw new Error(`driveEnsureParent failed: ${resp.status} ${txt}`);
+  }
+  return true;
+}
