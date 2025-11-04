@@ -3,9 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import DocumentsSection from "@/components/trip/DocumentsSection";
-
-<DocumentsSection tripId={tripId} />
 
 type Trip = {
   id: string;
@@ -526,98 +523,179 @@ function TripDetail({ id }: { id: string }) {
         )}
       </section>
 
-      {/* DOKUMENTUMOK */}
-      <section style={{ border: "1px solid #eee", borderRadius: 8, padding: 12, display: "grid", gap: 12 }}>
-        <h2 style={{ margin: 0 }}>Dokumentumok</h2>
+      {/* DOKUMENTUMOK – csak akkor látszik, ha a tulajdonos nézi VAGY van legalább 1 publikus doksi */}
+{(isOwner || documents.length > 0) && (
+  <section style={{ border: "1px solid #eee", borderRadius: 8, padding: 12, display: "grid", gap: 12 }}>
+    <h2 style={{ margin: 0 }}>Dokumentumok</h2>
 
-        {isOwner ? (
-          <>
-            <form onSubmit={onUploadDocs} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <input
-                type="file"
-                name="file"
-                accept=".pdf,.doc,.docx,.xls,.xlsx,.ods,.txt,image/*"
-                multiple
-                required
-              />
-              <input type="text" name="title" placeholder="Cím (opcionális)" />
-              <select name="media_visibility" defaultValue="private" title="Láthatóság">
-                <option value="private">Privát</option>
-                <option value="public">Publikus</option>
-              </select>
-              <input type="hidden" name="type" value="file" />
-              <input type="hidden" name="category" value="document" />
-              <button style={{ padding: 8, border: "1px solid #ddd", borderRadius: 6 }}>
-                Feltöltés
-              </button>
-            </form>
-            <p style={{ margin: 0 }}>{uploadMsg}</p>
-          </>
-        ) : (
-          <em>Csak a tulajdonos tölthet fel dokumentumokat ehhez az úthoz.</em>
-        )}
+    {isOwner ? (
+      <>
+        <form onSubmit={onUploadDocs} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <input
+            type="file"
+            name="file"
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.ods,.txt,image/*"
+            multiple
+            required
+          />
+          <input type="text" name="title" placeholder="Cím (opcionális)" />
+          <select name="media_visibility" defaultValue="private" title="Láthatóság">
+            <option value="private">Privát</option>
+            <option value="public">Publikus</option>
+          </select>
+          <input type="hidden" name="type" value="file" />
+          <input type="hidden" name="category" value="document" />
+          <button style={{ padding: 8, border: "1px solid #ddd", borderRadius: 6 }}>
+            Feltöltés
+          </button>
+        </form>
+        <p style={{ margin: 0 }}>{uploadMsg}</p>
+      </>
+    ) : (
+      <em>Csak a tulajdonos tölthet fel dokumentumokat ehhez az úthoz.</em>
+    )}
 
-        {documents.length === 0 ? (
-          <em style={{ color: "#666" }}>Nincs dokumentum.</em>
-        ) : (
-          <ul style={{ display: "grid", gap: 8, margin: 0, padding: 0, listStyle: "none" }}>
-            {documents.map((m) => {
-              const icon = fileIcon(m.title, m.mimeType);
-              const canDelete =
-                (!!m.uploader_user_id &&
-                  !!sess?.user?.email &&
-                  m.uploader_user_id.toLowerCase() === sess.user.email.toLowerCase()) ||
-                isOwner;
-              return (
-                <li
-                  key={m.id}
+    {documents.length === 0 ? (
+      // ha nem owner és nincs publikus doksi, ide se jutunk be (a felső feltétel elrejti a szekciót)
+      <em style={{ color: "#666" }}>Nincs dokumentum.</em>
+    ) : (
+      <div
+        style={{
+          display: "grid",
+          gap: 12,
+          gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+        }}
+      >
+        {documents.map((m) => {
+          const mime = (m.mimeType || "").toLowerCase();
+          const isImage = mime.startsWith("image/");
+          const isPdf = mime === "application/pdf";
+          const thumb = isImage
+            ? `/api/media/thumb/${m.drive_file_id}?w=1600`
+            : undefined;
+
+          const canDelete =
+            ((!!m.uploader_user_id &&
+              !!sess?.user?.email &&
+              m.uploader_user_id.toLowerCase() === sess.user.email.toLowerCase()) ||
+              isOwner);
+
+          return (
+            <article
+              key={m.id}
+              style={{
+                border: "1px solid #e5e7eb",
+                borderRadius: 12,
+                padding: 12,
+                display: "grid",
+                gap: 8,
+                background: "#fff",
+              }}
+              aria-label={`Dokumentum: ${m.title || m.mimeType || "dokumentum"}`}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <strong
                   style={{
-                    border: "1px solid #eee",
-                    borderRadius: 8,
-                    padding: "8px 12px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 12,
-                    background: "#fff",
+                    fontSize: 14,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
                   }}
-                  title={m.title}
+                  title={m.title || m.mimeType || ""}
                 >
+                  {m.title || m.mimeType || "dokumentum"}
+                </strong>
+                {m.media_visibility === "private" && (
+                  <span
+                    style={{
+                      fontSize: 12,
+                      padding: "2px 8px",
+                      borderRadius: 999,
+                      border: "1px solid #e5e7eb",
+                      color: "#555",
+                    }}
+                    title="Privát dokumentum"
+                  >
+                    Privát
+                  </span>
+                )}
+              </div>
+
+              {/* Előnézet – 4:3 arány */}
+              <div style={{ width: "100%", aspectRatio: "4 / 3", overflow: "hidden", borderRadius: 8, background: "#f7f7f7" }}>
+                {isImage ? (
+                  <img
+                    src={thumb!}
+                    alt={m.title || "dokumentum-kép"}
+                    loading="lazy"
+                    style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                    onError={(ev) => {
+                      const img = ev.currentTarget as HTMLImageElement;
+                      if (!img.dataset.fallback) {
+                        img.dataset.fallback = "1";
+                        img.src = `https://drive.google.com/uc?export=view&id=${m.drive_file_id}`;
+                      }
+                    }}
+                  />
+                ) : isPdf ? (
+                  <iframe
+                    src={`/api/media/file/${m.drive_file_id}`}
+                    title={m.title || "PDF"}
+                    style={{ width: "100%", height: "100%", border: 0 }}
+                  />
+                ) : (
                   <a
                     href={`/api/media/file/${m.drive_file_id}`}
                     target="_blank"
                     rel="noreferrer"
-                    style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: "inherit" }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      height: "100%",
+                      textDecoration: "none",
+                      color: "inherit",
+                      fontSize: 22,
+                    }}
+                    title="Megnyitás"
                   >
-                    <span style={{ fontSize: 22 }}>{icon}</span>
-                    <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 420 }}>
-                      {m.title || m.mimeType || "dokumentum"}
-                    </span>
-                    {m.media_visibility === "private" && (
-                      <span style={{ fontSize: 11, color: "#999", marginLeft: 8 }}>(privát)</span>
-                    )}
+                    📄 Megnyitás
                   </a>
-                  {canDelete && (
-                    <button
-                      onClick={() => onDeleteMedia(m.id)}
-                      style={{
-                        padding: "6px 10px",
-                        border: "1px solid #e33",
-                        borderRadius: 6,
-                        background: "#fff",
-                        color: "#e33",
-                        cursor: "pointer",
-                      }}
-                    >
-                      Törlés
-                    </button>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
+                )}
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "space-between" }}>
+                <a
+                  href={`/api/media/file/${m.drive_file_id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ textDecoration: "underline", fontSize: 14 }}
+                >
+                  Letöltés / megnyitás
+                </a>
+                {canDelete && (
+                  <button
+                    onClick={() => onDeleteMedia(m.id)}
+                    style={{
+                      padding: "6px 10px",
+                      border: "1px solid #e33",
+                      borderRadius: 6,
+                      background: "#fff",
+                      color: "#e33",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Törlés
+                  </button>
+                )}
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    )}
+  </section>
+)}
 
       {/* KÖLTÉSEK */}
       <section style={{ border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
