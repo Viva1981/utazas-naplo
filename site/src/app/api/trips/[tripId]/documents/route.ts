@@ -1,31 +1,40 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth"; // ha máshol van az auth/session, igazítsd az útvonalat
-import { getTripById, getDocumentsByTripId } from "@/lib/data"; 
-// ↑ Ezeket mindjárt létrehozzuk a 1.1 pontban, ha még nincsenek
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth"; // nálad EZ a valós export
+import { getTripById, getDocumentsByTripId } from "@/lib/data";
 
 export async function GET(
   req: Request,
   { params }: { params: { tripId: string } }
 ) {
-  const session = await auth(); // legyen benne a user id (owner vizsgálathoz)
-  const userId = session?.user?.id ?? null;
+  // Szerveroldali session lekérés
+  let session: any = null;
+  try {
+    session = await getServerSession(authOptions);
+  } catch {
+    // ha nincs session, az is ok – ilyenkor csak publikus doksikat adunk vissza
+  }
+
+  const userEmail = session?.user?.email?.toLowerCase() ?? null;
   const tripId = params.tripId;
 
-  // 1) Trip lekérés (owner ellenőrzés)
+  // 1) Trip meta (owner ellenőrzés)
   const trip = await getTripById(tripId);
   if (!trip) return new NextResponse("Trip not found", { status: 404 });
 
-  const isOwner = userId && trip.owner_user_id === userId;
+  // Nálad az owner_user_id e-mailnek tűnik (a trip oldali összehasonlításból ítélve)
+  const ownerEmail = (trip.owner_user_id as string | undefined)?.toLowerCase() ?? null;
+  const isOwner = !!userEmail && !!ownerEmail && userEmail === ownerEmail;
 
   // 2) Dokumentumok lekérés
   const allDocs = await getDocumentsByTripId(tripId);
 
-  // 3) Szűrés: owner mindent lát, mások csak 'public'-ot
+  // 3) Szűrés: a tulaj mindent lát; más csak a publikusat
   const visibleDocs = isOwner
     ? allDocs
     : allDocs.filter((d: any) => d.visibility === "public");
 
-  // 4) Visszaadás
+  // 4) Válasz
   return NextResponse.json({
     ok: true,
     documents: visibleDocs.map((d: any) => ({
