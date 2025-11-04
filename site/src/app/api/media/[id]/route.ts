@@ -16,15 +16,15 @@ type MediaRow = string[];
 type TripRow = string[];
 
 /**
- * GET /api/media/[id]  → átirányít Drive megjeleníthető URL-re
- * - Képek: https://drive.google.com/uc?export=view&id=FILE_ID  (img kompatibilis)
- * - PDF/egyéb: webViewLink vagy webContentLink
- * - Láthatóság: privát doksi csak tulaj/uploader láthatja
+ * GET /api/media/[id] → átirányít Drive-nézhető URL-re
+ * Képek: export=view, PDF: view link, egyéb: download
+ * Privát doksi: csak tulaj/uploader láthatja
  */
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
-  const fileId = params.id;
-
-  // Bejelentkezett user e-mailje (ha van)
+export async function GET(
+  _req: NextRequest,
+  ctx: { params: Promise<{ id: string }> } // ⬅️ Promise itt a lényeg
+) {
+  const { id: fileId } = await ctx.params;      // ⬅️ és itt await
   const session = await getServerSession(authOptions);
   const requester = (
     ((session as any)?.userId as string | undefined) ||
@@ -32,14 +32,11 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     ""
   ).toLowerCase();
 
-  // Media táblából kikeressük a sort a drive_file_id alapján (E oszlop = index 4)
+  // Media sor a drive_file_id alapján (E oszlop = index 4)
   const mediaRes = await sheetsGet(MEDIA_RANGE);
   const rows: MediaRow[] = mediaRes.values ?? [];
   const row = rows.find((r) => (r[4] || "") === fileId);
-
-  if (!row) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
+  if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const tripId = row[1];                         // B
   const mimeType = (row[5] || "").toLowerCase(); // F
@@ -50,11 +47,9 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   const category = (row[13] || "").toLowerCase();       // N
   const mediaVisibility = (row[14] || "public").toLowerCase(); // O
 
-  if (archivedAt) {
-    return NextResponse.json({ error: "Archived" }, { status: 410 });
-  }
+  if (archivedAt) return NextResponse.json({ error: "Archived" }, { status: 410 });
 
-  // Trip tulaj azonosítása (privát ellenőrzéshez)
+  // Trip owner (privát ellenőrzéshez)
   const tripsRes = await sheetsGet(TRIPS_RANGE);
   const trows: TripRow[] = tripsRes.values ?? [];
   const tripRow = trows.find((t) => (t[0] || "") === tripId);
@@ -63,9 +58,8 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   const isOwner = !!owner && owner === requester;
   const isUploader = !!uploaderUserId && uploaderUserId === requester;
 
-  // Privát doksi esetén csak tulaj/uploader férhet hozzá
+  // Privát doksi → csak tulaj/uploader
   if (category === "document" && mediaVisibility === "private" && !(isOwner || isUploader)) {
-    // 403, de adjunk vissza kis SVG-t, hogy a UI ne törjön
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200"><rect width="100%" height="100%" fill="#f3f3f3"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#888" font-family="sans-serif" font-size="14">Privát dokumentum</text></svg>`;
     return new NextResponse(svg, {
       status: 403,
@@ -73,7 +67,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     });
   }
 
-  // Megjeleníthető Drive URL kiválasztása
+  // Nézhető Drive URL kiválasztása
   const isImage = mimeType.startsWith("image/");
   const isPdf = mimeType === "application/pdf";
 
