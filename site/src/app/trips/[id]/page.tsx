@@ -78,7 +78,7 @@ function TripDetail({ id }: { id: string }) {
   const [expMsg, setExpMsg] = useState("");
   const [notFound, setNotFound] = useState(false);
 
-  // ✅ HIÁNYZÓ STATE PÓTLÁSA:
+  // lightbox index
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   const isOwner =
@@ -113,7 +113,7 @@ function TripDetail({ id }: { id: string }) {
       if (!alive) return;
       setTrip(t);
 
-      // MEDIA – szerver már szűri láthatóság szerint
+      // MEDIA – szerver szűri láthatóság szerint
       const m = await fetch(`/api/media/list?trip_id=${id}`, { cache: "no-store" })
         .then((x) => x.json())
         .catch(() => ({ items: [] }));
@@ -140,7 +140,7 @@ function TripDetail({ id }: { id: string }) {
     setMedia((m.items || []) as Media[]);
   }
 
-  // --- Képek vs. Doksik: CATEGORY az elsődleges, MIME csak fallback ----------------
+  // --- Képek vs. Doksik: CATEGORY az elsődleges, MIME fallback ----------------
   const images = useMemo(
     () =>
       media.filter(
@@ -208,7 +208,7 @@ function TripDetail({ id }: { id: string }) {
       await refreshMedia();
       form.reset();
     } else {
-      setUploadMsg("Hiba ❌ " + (j?.error ? String(j.error) : ""));
+      setUploadMsg("Hiba ❌ " + (j?.error ? String(j.error) : "")); 
     }
   }
 
@@ -240,7 +240,7 @@ function TripDetail({ id }: { id: string }) {
       await refreshMedia();
       form.reset();
     } else {
-      setUploadMsg("Hiba ❌ " + (j?.error ? String(j.error) : ""));
+      setUploadMsg("Hiba ❌ " + (j?.error ? String(j.error) : "")); 
     }
   }
 
@@ -259,7 +259,7 @@ function TripDetail({ id }: { id: string }) {
       setUploadMsg("Törölve ✅");
       await refreshMedia();
     } else {
-      setUploadMsg("Hiba ❌ " + (j?.error ? String(j.error) : ""));
+      setUploadMsg("Hiba ❌ " + (j?.error ? String(j.error) : "")); 
     }
   }
 
@@ -297,9 +297,9 @@ function TripDetail({ id }: { id: string }) {
         (x) => x.json()
       );
       setExpenses(e2.items || []);
-      form.reset();
+      (form as HTMLFormElement).reset();
     } else {
-      setExpMsg("Hiba ❌ " + (j?.error ? String(j.error) : ""));
+      setExpMsg("Hiba ❌ " + (j?.error ? String(j.error) : "")); 
     }
   }
 
@@ -481,7 +481,7 @@ function TripDetail({ id }: { id: string }) {
         )}
       </section>
 
-      {/* DOKUMENTUMOK (külön a fotóktól) */}
+      {/* DOKUMENTUMOK */}
       <section style={{ border: "1px solid #eee", borderRadius: 8, padding: 12, display: "grid", gap: 12 }}>
         <h2 style={{ margin: 0 }}>Dokumentumok</h2>
 
