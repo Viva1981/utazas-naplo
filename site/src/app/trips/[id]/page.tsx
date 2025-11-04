@@ -133,4 +133,88 @@ function TripDetail({ id }: { id: string }) {
     </main>
   );
 }
+{/* 📸 FOTÓGALÉRIA */}
+<section className="max-w-5xl mx-auto mt-10 p-6 bg-white/80 backdrop-blur-md rounded-xl shadow-md">
+  <div className="flex justify-between items-center mb-4">
+    <h2 className="text-2xl font-semibold text-gray-800">Fotók</h2>
+    {isOwner && (
+      <small className="text-gray-500">
+        {images.length < 3
+          ? `Még ${3 - images.length} kép tölthető fel`
+          : "Elérted a 3 képes limitet"}
+      </small>
+    )}
+  </div>
+
+  {isOwner && (
+    <form
+      onSubmit={onUploadImages}
+      className="flex flex-wrap gap-4 items-center border p-4 rounded-lg bg-gray-50 mb-6"
+    >
+      <input
+        type="file"
+        name="file"
+        accept="image/*"
+        multiple
+        required
+        disabled={images.length >= 3}
+        className="text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-blue-100 file:text-blue-700 hover:file:bg-blue-200"
+      />
+      <input
+        type="text"
+        name="title"
+        placeholder="Cím (opcionális)"
+        className="border rounded-md px-3 py-2 text-sm"
+      />
+      <button
+        type="submit"
+        className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md hover:bg-blue-700 transition disabled:opacity-50"
+        disabled={images.length >= 3}
+      >
+        Feltöltés
+      </button>
+    </form>
+  )}
+
+  {images.length === 0 ? (
+    <p className="text-gray-500 italic">Még nincs kép.</p>
+  ) : (
+    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+      {images.map((m, i) => (
+        <div
+          key={m.id}
+          className="group relative rounded-lg overflow-hidden shadow-sm hover:shadow-lg transition"
+        >
+          <img
+            src={`/api/media/thumb/${m.drive_file_id}?w=800`}
+            alt={m.title || "Kép"}
+            className="w-full h-48 object-cover transition-transform duration-300 group-hover:scale-105"
+            onClick={() => setLightboxIndex(i)}
+          />
+          <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-sm transition">
+            Kattints nagyításhoz
+          </div>
+        </div>
+      ))}
+    </div>
+  )}
+
+  {/* Lightbox */}
+  {lightboxIndex !== null && images[lightboxIndex] && (
+    <dialog open className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
+      <img
+        src={`/api/media/thumb/${images[lightboxIndex].drive_file_id}?w=1600`}
+        alt={images[lightboxIndex].title || ""}
+        className="max-h-[90vh] max-w-[90vw] rounded-lg shadow-2xl"
+        onClick={() => setLightboxIndex(null)}
+      />
+      <button
+        onClick={() => setLightboxIndex(null)}
+        className="absolute top-6 right-6 text-white text-3xl font-bold hover:opacity-80"
+      >
+        ×
+      </button>
+    </dialog>
+  )}
+</section>
 
