@@ -1,15 +1,11 @@
-// site/src/lib/drive.ts
-
 const DRIVE_API  = "https://www.googleapis.com/drive/v3";
 const UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
 
-/**
- * Mappa létrehozása adott parent alatt
- */
+/** Mappa létrehozása adott parent alatt */
 export async function driveCreateFolder(accessToken: string, name: string, parentFolderId: string) {
   console.log("DRIVE create folder →", { name, parentFolderId });
 
-  const resp = await fetch(`${DRIVE_API}/files`, {
+  const resp = await fetch(`${DRIVE_API}/files?supportsAllDrives=true&fields=id,name,webViewLink,parents`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -31,26 +27,11 @@ export async function driveCreateFolder(accessToken: string, name: string, paren
   const folder = await resp.json().catch(() => ({} as any));
   console.log("DRIVE create folder OK", folder);
 
-  // meta (webViewLink) lekérése
-  const metaResp = await fetch(`${DRIVE_API}/files/${folder.id}?fields=id,name,webViewLink`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-
-  if (!metaResp.ok) {
-    const txt = await metaResp.text().catch(() => "<no body>");
-    console.error("DRIVE get meta FAILED", { status: metaResp.status, body: txt });
-    throw new Error(`drive meta failed: ${metaResp.status} ${txt}`);
-  }
-
-  const meta = await metaResp.json().catch(() => ({} as any));
-  console.log("DRIVE meta OK", meta);
-
-  return { id: folder.id as string, webViewLink: meta.webViewLink as string };
+  // meta már kérve volt a felső hívásban (fields=...), visszaadjuk
+  return { id: folder.id as string, webViewLink: folder.webViewLink as string };
 }
 
-/**
- * Fájl feltöltése (multipart) a megadott parent mappába
- */
+/** Fájl feltöltése (multipart) a megadott parent mappába */
 export async function driveUploadFile(
   accessToken: string,
   file: Blob,
@@ -66,7 +47,7 @@ export async function driveUploadFile(
   form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
   form.append("file", file);
 
-  const resp = await fetch(`${UPLOAD_API}/files?uploadType=multipart`, {
+  const resp = await fetch(`${UPLOAD_API}/files?uploadType=multipart&supportsAllDrives=true&fields=id`, {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}` },
     body: form,
@@ -81,9 +62,7 @@ export async function driveUploadFile(
   return (await resp.json()) as { id: string };
 }
 
-/**
- * Fájl metaadatainak lekérése (ikon/thumbnail/links miatt)
- */
+/** Fájl metaadatainak lekérése (ikon/thumbnail/links miatt) */
 export async function driveGetFileMeta(accessToken: string, fileId: string) {
   const fields = [
     "id",
@@ -95,7 +74,7 @@ export async function driveGetFileMeta(accessToken: string, fileId: string) {
     "thumbnailLink",
   ].join(",");
 
-  const resp = await fetch(`${DRIVE_API}/files/${fileId}?fields=${fields}`, {
+  const resp = await fetch(`${DRIVE_API}/files/${fileId}?fields=${fields}&supportsAllDrives=true`, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 
@@ -115,6 +94,7 @@ export async function driveGetFileMeta(accessToken: string, fileId: string) {
     thumbnailLink?: string;
   }>;
 }
+
 export async function driveDeleteFile(accessToken: string, fileId: string) {
   const url = `${DRIVE_API}/files/${fileId}?supportsAllDrives=true`;
   const resp = await fetch(url, {
@@ -128,6 +108,10 @@ export async function driveDeleteFile(accessToken: string, fileId: string) {
   }
   return true;
 }
+
+/* ===================== Extra helpek – EGY példányban ===================== */
+
+/** Public megtekintés engedélyezése (képek <img>-hez is) */
 export async function driveSetAnyoneReader(accessToken: string, fileId: string) {
   const url = `https://www.googleapis.com/drive/v3/files/${fileId}/permissions?supportsAllDrives=true&fields=id`;
   const resp = await fetch(url, {
@@ -142,6 +126,7 @@ export async function driveSetAnyoneReader(accessToken: string, fileId: string) 
       allowFileDiscovery: false,
     }),
   });
+
   if (!resp.ok) {
     const txt = await resp.text().catch(() => "<no body>");
     console.error("DRIVE set anyone reader FAILED", { status: resp.status, body: txt });
@@ -149,7 +134,8 @@ export async function driveSetAnyoneReader(accessToken: string, fileId: string) 
   }
   return true;
 }
-// Szülő mappák lekérése
+
+/** Egy fájl/mappa szülő mappáinak lekérése */
 export async function driveGetParents(accessToken: string, fileId: string) {
   const url = `https://www.googleapis.com/drive/v3/files/${fileId}?fields=parents&supportsAllDrives=true`;
   const resp = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
@@ -162,7 +148,7 @@ export async function driveGetParents(accessToken: string, fileId: string) {
   return j.parents ?? [];
 }
 
-// Biztosítsuk, hogy a fájl/mappa a kívánt parentben legyen (ha nem, átrakjuk)
+/** Biztosítsuk, hogy a megadott mappa a kívánt parent alatt legyen (ha nem, átrakjuk) */
 export async function driveEnsureParent(
   accessToken: string,
   fileId: string,
@@ -181,56 +167,6 @@ export async function driveEnsureParent(
     headers: { Authorization: `Bearer ${accessToken}` },
   });
 
-  if (!resp.ok) {
-    const txt = await resp.text().catch(() => "<no body>");
-    console.error("DRIVE ensure parent FAILED", { status: resp.status, body: txt });
-    throw new Error(`driveEnsureParent failed: ${resp.status} ${txt}`);
-  }
-  return true;
-}
-export async function driveSetAnyoneReader(accessToken: string, fileId: string) {
-  const url = `https://www.googleapis.com/drive/v3/files/${fileId}/permissions?supportsAllDrives=true&fields=id`;
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ role: "reader", type: "anyone", allowFileDiscovery: false }),
-  });
-  if (!resp.ok) {
-    const txt = await resp.text().catch(() => "<no body>");
-    console.error("DRIVE set anyone reader FAILED", { status: resp.status, body: txt });
-    throw new Error(`driveSetAnyoneReader failed: ${resp.status} ${txt}`);
-  }
-  return true;
-}
-
-export async function driveGetParents(accessToken: string, fileId: string) {
-  const url = `https://www.googleapis.com/drive/v3/files/${fileId}?fields=parents&supportsAllDrives=true`;
-  const resp = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-  if (!resp.ok) {
-    const txt = await resp.text().catch(() => "<no body>");
-    console.error("DRIVE get parents FAILED", { status: resp.status, body: txt });
-    throw new Error(`driveGetParents failed: ${resp.status} ${txt}`);
-  }
-  const j = (await resp.json()) as { parents?: string[] };
-  return j.parents ?? [];
-}
-
-export async function driveEnsureParent(accessToken: string, fileId: string, targetParentId: string) {
-  const parents = await driveGetParents(accessToken, fileId);
-  if (parents.includes(targetParentId)) return true;
-
-  const removeParents = parents.join(",");
-  const url = `https://www.googleapis.com/drive/v3/files/${fileId}?addParents=${encodeURIComponent(
-    targetParentId
-  )}${removeParents ? `&removeParents=${encodeURIComponent(removeParents)}` : ""}&supportsAllDrives=true&fields=id,parents`;
-
-  const resp = await fetch(url, {
-    method: "PATCH",
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
   if (!resp.ok) {
     const txt = await resp.text().catch(() => "<no body>");
     console.error("DRIVE ensure parent FAILED", { status: resp.status, body: txt });
