@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { sheetsGet } from "@/lib/sheets";
@@ -11,7 +11,8 @@ const TRIPS_RANGE = "Trips!A2:I";
 type MediaRow = string[];
 type TripRow = string[];
 
-export async function GET(_: Request, { params }: { params: { id: string } }) {
+export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  const { id } = await ctx.params;
   const session = await getServerSession(authOptions);
   const me =
     ((session as any)?.userId as string | undefined) ||
