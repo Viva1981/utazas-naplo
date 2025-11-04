@@ -19,23 +19,27 @@ export default function SiteHeader() {
                 👋 {session.user.name || session.user.email}
               </span>
               <button
-  onClick={(e) => {
-    e.preventDefault();
-    // 1) próbáld programozottan (Google provider)
-    Promise.resolve(
-      // ha más providert használsz, ide írd az ID-t
-      signIn("google", { callbackUrl: "/" })
-    ).catch(() => {
-      // 2) biztos fallback: teljes navigáció az auth oldalra
-      window.location.href = "/api/auth/signin?callbackUrl=/";
-    });
-  }}
-  className="text-sm px-3 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700"
-  title="Bejelentkezés"
->
-  Bejelentkezés
-</button>
-
+                onClick={() => signOut({ callbackUrl: "/" })}
+                className="text-sm px-3 py-1 rounded-md border border-gray-300 hover:bg-gray-100"
+                title="Kijelentkezés"
+              >
+                Kijelentkezés
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                // explicit provider + fallback
+                void signIn("google", { callbackUrl: "/" }).catch(() => {
+                  window.location.href = "/api/auth/signin?callbackUrl=/";
+                });
+              }}
+              className="text-sm px-3 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700"
+              title="Bejelentkezés"
+            >
+              Bejelentkezés
+            </button>
           )}
         </nav>
       </div>

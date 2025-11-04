@@ -14,12 +14,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-screen bg-white text-gray-900">
         <Providers>
           <SiteHeader />
-          {/* a fix header kb. 56-64px magas – adjunk neki helyet */}
-          <div className="pt-16">
-            {children}
-          </div>
+          <div className="pt-16">{children}</div>
         </Providers>
       </body>
     </html>
   );
 }
+

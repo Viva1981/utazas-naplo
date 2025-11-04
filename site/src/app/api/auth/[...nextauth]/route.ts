@@ -13,6 +13,5 @@ export const authOptions = {
 };
 
 const handler = NextAuth(authOptions);
-
-// App Router: GET és POST export kötelező
 export { handler as GET, handler as POST };
+
