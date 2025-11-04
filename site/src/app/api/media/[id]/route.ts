@@ -1,85 +1,91 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { sheetsFindRowBy, sheetsUpdateRange } from "@/lib/sheets";
-import { driveDeleteFile } from "@/lib/drive";
+import { sheetsGet } from "@/lib/sheets";
 
-const MEDIA_RANGE = "Media!A2:M";    // 0..12: id..archived_at
-const TRIPS_RANGE = "Trips!A2:H";    // id..owner_user_id..folder_link
+// Media (A..O):  A:id B:trip_id C:type D:title E:drive_file_id F:mimeType G:webViewLink H:webContentLink
+//                I:thumbnailLink J:size K:created_at L:uploader_user_id M:archived_at N:category O:media_visibility
+const MEDIA_RANGE = "Media!A2:O";
+const TRIPS_RANGE = "Trips!A2:I"; // A:id ... F:owner_user_id ... I:visibility
 
-export async function DELETE(
-  _req: Request,
-  ctx: { params: Promise<{ id: string }> }
-) {
-  const { id } = await ctx.params; // media id
+export const runtime = "nodejs";
+export const revalidate = 0;
+export const dynamic = "force-dynamic";
+
+type MediaRow = string[];
+type TripRow = string[];
+
+/**
+ * GET /api/media/[id]  → átirányít Drive megjeleníthető URL-re
+ * - Képek: https://drive.google.com/uc?export=view&id=FILE_ID  (img kompatibilis)
+ * - PDF/egyéb: webViewLink vagy webContentLink
+ * - Láthatóság: privát doksi csak tulaj/uploader láthatja
+ */
+export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+  const fileId = params.id;
+
+  // Bejelentkezett user e-mailje (ha van)
   const session = await getServerSession(authOptions);
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const requester = (
+    ((session as any)?.userId as string | undefined) ||
+    ((session?.user as any)?.email as string | undefined) ||
+    ""
+  ).toLowerCase();
 
-  const sessionUser =
-    ((session as any).userId as string | undefined) ||
-    ((session.user as any)?.email as string | undefined) ||
-    "";
-  if (!sessionUser) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Media táblából kikeressük a sort a drive_file_id alapján (E oszlop = index 4)
+  const mediaRes = await sheetsGet(MEDIA_RANGE);
+  const rows: MediaRow[] = mediaRes.values ?? [];
+  const row = rows.find((r) => (r[4] || "") === fileId);
 
-  // 1) Media sor megkeresése
-  const { index: mediaIdx, row: mediaRow } = await sheetsFindRowBy(
-    MEDIA_RANGE,
-    (r) => (r?.[0] || "") === id
-  );
-  if (mediaIdx < 0 || !mediaRow) {
+  if (!row) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const tripId           = mediaRow[1] || "";
-  const driveFileId      = mediaRow[4] || "";
-  const uploaderUserId   = (mediaRow[11] || "").toLowerCase();
-  const archivedAlready  = (mediaRow[12] || "").trim();
+  const tripId = row[1];                         // B
+  const mimeType = (row[5] || "").toLowerCase(); // F
+  const webViewLink = row[6] || "";              // G
+  const webContentLink = row[7] || "";           // H
+  const uploaderUserId = (row[11] || "").toLowerCase(); // L
+  const archivedAt = row[12];                    // M
+  const category = (row[13] || "").toLowerCase();       // N
+  const mediaVisibility = (row[14] || "public").toLowerCase(); // O
 
-  if (archivedAlready) {
-    // már törölt/archivált -> legyen idempotens
-    return NextResponse.json({ ok: true, archived: true });
+  if (archivedAt) {
+    return NextResponse.json({ error: "Archived" }, { status: 410 });
   }
 
-  // 2) Jogosultság: uploader VAGY trip owner törölhet
-  const requester = sessionUser.toLowerCase();
+  // Trip tulaj azonosítása (privát ellenőrzéshez)
+  const tripsRes = await sheetsGet(TRIPS_RANGE);
+  const trows: TripRow[] = tripsRes.values ?? [];
+  const tripRow = trows.find((t) => (t[0] || "") === tripId);
+  const owner = ((tripRow?.[5] || "") as string).toLowerCase(); // F:owner_user_id
 
-  // trip owner felkutatása
-  let isOwner = false;
-  if (tripId) {
-    const { row: tripRow } = await sheetsFindRowBy(
-      TRIPS_RANGE,
-      (r) => (r?.[0] || "") === tripId
-    );
-    const owner = (tripRow?.[5] || "").toLowerCase(); // owner_user_id
-    isOwner = !!owner && owner === requester;
-  }
-
+  const isOwner = !!owner && owner === requester;
   const isUploader = !!uploaderUserId && uploaderUserId === requester;
 
-  if (!isUploader && !isOwner) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  // Privát doksi esetén csak tulaj/uploader férhet hozzá
+  if (category === "document" && mediaVisibility === "private" && !(isOwner || isUploader)) {
+    // 403, de adjunk vissza kis SVG-t, hogy a UI ne törjön
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200"><rect width="100%" height="100%" fill="#f3f3f3"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#888" font-family="sans-serif" font-size="14">Privát dokumentum</text></svg>`;
+    return new NextResponse(svg, {
+      status: 403,
+      headers: { "Content-Type": "image/svg+xml", "Cache-Control": "no-store" },
+    });
   }
 
-  // 3) Drive törlés (trash-be, de Drive API-val DELETE)
-  const accessToken = (session as any).accessToken as string | undefined;
-  if (!accessToken) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Megjeleníthető Drive URL kiválasztása
+  const isImage = mimeType.startsWith("image/");
+  const isPdf = mimeType === "application/pdf";
 
-  if (driveFileId) {
-    try {
-      await driveDeleteFile(accessToken, driveFileId);
-    } catch (e) {
-      // Ha a Drive törlés nem sikerül, ne vesszünk el – de logoljuk:
-      console.error("Drive delete error:", e);
-    }
-  }
+  const redirectUrl =
+    isImage
+      ? `https://drive.google.com/uc?export=view&id=${fileId}`
+      : isPdf
+        ? (webViewLink || `https://drive.google.com/file/d/${fileId}/view`)
+        : (webContentLink || `https://drive.google.com/uc?export=download&id=${fileId}`);
 
-  // 4) archived_at kitöltése a Media sorban
-  const targetA1 = `Media!A${2 + mediaIdx}:M${2 + mediaIdx}`;
-  const updated = [...mediaRow];
-  while (updated.length < 13) updated.push("");
-  updated[12] = new Date().toISOString(); // M: archived_at
-
-  await sheetsUpdateRange(targetA1, [updated]);
-
-  return NextResponse.json({ ok: true });
+  return NextResponse.redirect(redirectUrl, {
+    status: 302,
+    headers: { "Cache-Control": "private, max-age=60" },
+  });
 }
