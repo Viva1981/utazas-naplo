@@ -411,64 +411,81 @@ function TripDetail({ id }: { id: string }) {
             }}
           >
             {images.map((m, i) => {
-              const thumb = `https://drive.google.com/uc?export=view&id=${m.drive_file_id}`;
-              const canDelete =
-                (!!m.uploader_user_id &&
-                  !!sess?.user?.email &&
-                  m.uploader_user_id.toLowerCase() === sess.user.email.toLowerCase()) ||
-                isOwner;
-              return (
-                <div key={m.id} style={{ display: "grid", gap: 6 }}>
-                  <button
-                    onClick={() => setLightboxIndex(i)}
-                    style={{
-                      border: "none",
-                      padding: 0,
-                      borderRadius: 8,
-                      overflow: "hidden",
-                      background: "transparent",
-                      cursor: "zoom-in",
-                      width: "100%",
-                      aspectRatio: "4 / 3",
-                    }}
-                    title={m.title || "Kép megnyitása"}
-                  >
-                    <img
-  src={driveThumb(m.drive_file_id, 1600)}
-  alt={m.title || "kép"}
-  loading="lazy"
-  style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-  onError={(ev) => {
-    // ha a thumbnail nem jön, próbáljuk meg a uc?export=view-t
-    const img = ev.currentTarget as HTMLImageElement;
-    if (!img.dataset.fallback) {
-      img.dataset.fallback = "1";
-      img.src = driveView(m.drive_file_id);
-    }
-  }}
-/>
+  const thumb = `https://drive.google.com/thumbnail?id=${m.drive_file_id}&sz=w1600`;
+  const canDelete =
+    (!!m.uploader_user_id &&
+      !!sess?.user?.email &&
+      m.uploader_user_id.toLowerCase() === sess.user.email.toLowerCase()) ||
+    isOwner;
 
-                  </button>
+  return (
+    <div key={m.id} style={{ display: "grid", gap: 6 }}>
+      {/* Kártya: ratio-wrap (75% = 4:3) */}
+      <button
+        onClick={() => setLightboxIndex(i)}
+        title={m.title || "Kép megnyitása"}
+        style={{
+          border: "none",
+          padding: 0,
+          background: "transparent",
+          cursor: "zoom-in",
+          display: "block",
+          width: "100%",
+        }}
+      >
+        <div
+          style={{
+            position: "relative",
+            width: "100%",
+            paddingTop: "75%", // 4:3 arány – mobilon is működik
+            background: "#f7f7f7",
+            borderRadius: 8,
+            overflow: "hidden",
+          }}
+        >
+          <img
+            src={thumb}
+            alt={m.title || "kép"}
+            loading="lazy"
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              display: "block",
+            }}
+            onError={(ev) => {
+              const img = ev.currentTarget as HTMLImageElement;
+              if (!img.dataset.fallback) {
+                img.dataset.fallback = "1";
+                img.src = `https://drive.google.com/uc?export=view&id=${m.drive_file_id}`;
+              }
+            }}
+          />
+        </div>
+      </button>
 
-                  {canDelete && (
-                    <button
-                      onClick={() => onDeleteMedia(m.id)}
-                      style={{
-                        padding: "6px 10px",
-                        border: "1px solid #e33",
-                        borderRadius: 6,
-                        background: "#fff",
-                        color: "#e33",
-                        cursor: "pointer",
-                        justifySelf: "start",
-                      }}
-                    >
-                      Törlés
-                    </button>
-                  )}
-                </div>
-              );
-            })}
+      {canDelete && (
+        <button
+          onClick={() => onDeleteMedia(m.id)}
+          style={{
+            padding: "6px 10px",
+            border: "1px solid #e33",
+            borderRadius: 6,
+            background: "#fff",
+            color: "#e33",
+            cursor: "pointer",
+            justifySelf: "start",
+          }}
+        >
+          Törlés
+        </button>
+      )}
+    </div>
+  );
+})}
+
           </div>
         )}
 
