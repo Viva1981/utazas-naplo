@@ -29,22 +29,19 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "Missing or invalid fields" }, { status: 400 });
   }
 
-  // Beolvassuk a Media sheetet és megkeressük a sort
+  // Media sheet beolvasás + sor megkeresése
   const res = await sheetsGet(MEDIA_RANGE_ALL);
   const rows: MediaRow[] = res.values ?? [];
-
   const idx = rows.findIndex((r) => (r[0] || "") === id); // A oszlop = id
   if (idx === -1) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // A táblában a sor száma (fejléc +1 miatt) = index + 2
-  const sheetRow = idx + 2;
-
-  // O oszlop = media_visibility (15. oszlop)
-  const range = `Media!O${sheetRow}:O${sheetRow}`;
+  // O oszlop (15.) frissítése az adott sorban
+  const rowNumber = idx + 2; // fejléc miatt +2
+  const range = `Media!O${rowNumber}:O${rowNumber}`;
   await sheetsUpdateRange(range, [[media_visibility]]);
 
   return NextResponse.json({ ok: true });
 }
 
-// opcionálisan POST-tal is működjön ugyanígy
+// opcionálisan POST is ugyanaz
 export const POST = PATCH;
