@@ -556,7 +556,6 @@ function TripDetail({ id }: { id: string }) {
     )}
 
     {documents.length === 0 ? (
-      // ha nem owner és nincs publikus doksi, ide se jutunk be (a felső feltétel elrejti a szekciót)
       <em style={{ color: "#666" }}>Nincs dokumentum.</em>
     ) : (
       <div
@@ -570,9 +569,9 @@ function TripDetail({ id }: { id: string }) {
           const mime = (m.mimeType || "").toLowerCase();
           const isImage = mime.startsWith("image/");
           const isPdf = mime === "application/pdf";
-          const thumb = isImage
-            ? `/api/media/thumb/${m.drive_file_id}?w=1600`
-            : undefined;
+
+          // képes doksinál ugyanaz a thumb, mint a Fotóknál
+          const thumb = isImage ? `/api/media/thumb/${m.drive_file_id}?w=1600` : undefined;
 
           const canDelete =
             ((!!m.uploader_user_id &&
@@ -696,6 +695,7 @@ function TripDetail({ id }: { id: string }) {
     )}
   </section>
 )}
+
 
       {/* KÖLTÉSEK */}
       <section style={{ border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
