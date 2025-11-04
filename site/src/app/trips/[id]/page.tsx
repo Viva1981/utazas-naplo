@@ -43,18 +43,6 @@ type Expense = {
 
 // ---- helpers ----------------------------------------------------
 
-function fileIcon(title?: string, mimeType?: string) {
-  const t = (title || "").toLowerCase();
-  const mime = (mimeType || "").toLowerCase();
-  if (mime.includes("pdf") || t.endsWith(".pdf")) return "📄";
-  if (mime.includes("sheet") || /\.(xls|xlsx|ods)$/.test(t)) return "📊";
-  if (mime.includes("word") || /\.(doc|docx|odt)$/.test(t)) return "📝";
-  if (mime.startsWith("video/") || /\.(mp4|mov|mkv|webm)$/.test(t)) return "🎞️";
-  if (mime.startsWith("audio/") || /\.(mp3|wav|m4a|flac)$/.test(t)) return "🎵";
-  if (mime.startsWith("image/") || /\.(png|jpe?g|gif|webp|avif|heic|heif)$/i.test(t)) return "🖼️";
-  return "📎";
-}
-
 function niceDate(d?: string) {
   if (!d) return "";
   const [Y, M, D] = d.split("-");
@@ -569,8 +557,6 @@ function TripDetail({ id }: { id: string }) {
           const mime = (m.mimeType || "").toLowerCase();
           const isImage = mime.startsWith("image/");
           const isPdf = mime === "application/pdf";
-
-          // képes doksinál ugyanaz a thumb, mint a Fotóknál
           const thumb = isImage ? `/api/media/thumb/${m.drive_file_id}?w=1600` : undefined;
 
           const canDelete =
@@ -697,6 +683,7 @@ function TripDetail({ id }: { id: string }) {
 )}
 
 
+
       {/* KÖLTÉSEK */}
       <section style={{ border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
         <h2>Költések</h2>
@@ -717,18 +704,6 @@ function TripDetail({ id }: { id: string }) {
         ) : (
           <em>Csak a tulajdonos rögzíthet költéseket ehhez az úthoz.</em>
         )}
-
-        <ul style={{ display: "grid", gap: 8, marginTop: 8 }}>
-          {expenses.map((ex) => (
-            <li key={ex.id} style={{ border: "1px solid #f0f0f0", borderRadius: 6, padding: 8 }}>
-              <div style={{ fontWeight: 600 }}>
-                {ex.date} • {ex.category} • {ex.amount} {ex.currency}
-              </div>
-              <div style={{ fontSize: 12, color: "#666" }}>
-                {ex.description} • Fizetés: {ex.payment_method}
-              </div>
-            </li>
-          ))}
           {expenses.length === 0 && <em>Még nincs költés.</em>}
         </ul>
       </section>
