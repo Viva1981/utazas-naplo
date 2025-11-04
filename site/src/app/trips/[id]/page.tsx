@@ -405,7 +405,7 @@ function TripDetail({ id }: { id: string }) {
             }}
           >
             {images.map((m, i) => {
-              const thumb = isImage ? `https://drive.google.com/uc?export=view&id=${m.drive_file_id}` : "";
+              const thumb = `https://drive.google.com/uc?export=view&id=${m.drive_file_id}`;
               const canDelete =
                 (!!m.uploader_user_id &&
                   !!sess?.user?.email &&
