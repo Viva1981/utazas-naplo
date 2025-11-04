@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { useSession } from "next-auth/react";
+import DocumentsSection from "@/components/trip/DocumentsSection";
+
+<DocumentsSection tripId={tripId} />
 
 type Trip = {
   id: string;
@@ -618,7 +621,7 @@ function TripDetail({ id }: { id: string }) {
 
       {/* KÖLTÉSEK */}
       <section style={{ border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
-        <h2>Költés rögzítése</h2>
+        <h2>Költések</h2>
 
         {isOwner ? (
           <>
