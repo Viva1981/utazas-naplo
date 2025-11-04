@@ -92,7 +92,7 @@ function TripDetail({ id }: { id: string }) {
           </p>
         </div>
       </section>
-
+      console.log("isOwner:", isOwner);
       {/* ℹ️ Trip info + visibility */}
       <section className="max-w-5xl mx-auto p-6 mt-10 bg-white/70 backdrop-blur-lg rounded-xl shadow-lg">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
