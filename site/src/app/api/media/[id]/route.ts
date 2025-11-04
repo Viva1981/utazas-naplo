@@ -51,10 +51,10 @@ export async function DELETE(
       (r) => (r?.[0] || "") === tripId
     );
     const owner = (tripRow?.[5] || "").toLowerCase(); // owner_user_id
-    isOwner = owner && owner === requester;
+    isOwner = !!owner && owner === requester;
   }
 
-  const isUploader = uploaderUserId && uploaderUserId === requester;
+  const isUploader = !!uploaderUserId && uploaderUserId === requester;
 
   if (!isUploader && !isOwner) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
