@@ -1,8 +1,10 @@
-// App Router + Turbopack fixek (különben "tölt és semmi")
+import NextAuth from "next-auth";
+import { authOptions } from "@/lib/auth";
+
+// Next 16 + App Router: ne legyen edge-cache / static
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 
-// Egyetlen igaz forrás: a központi auth.ts
-export { GET, POST } from "@/auth";
-
+const handler = NextAuth(authOptions);
+export { handler as GET, handler as POST };
