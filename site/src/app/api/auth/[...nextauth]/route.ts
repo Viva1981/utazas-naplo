@@ -1,17 +1,21 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
 
-export const authOptions = {
+// 👇 fontos Next 16 + App Router fixek
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
+
+const handler = NextAuth({
   secret: process.env.NEXTAUTH_SECRET,
-  session: { strategy: "jwt" as const },
+  session: { strategy: "jwt" },
   providers: [
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID!,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
     }),
   ],
-};
+});
 
-const handler = NextAuth(authOptions);
 export { handler as GET, handler as POST };
 
