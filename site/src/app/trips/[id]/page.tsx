@@ -42,12 +42,6 @@ type Expense = {
 };
 
 // ---- helpers ----------------------------------------------------
-// Drive image helpers
-const driveThumb = (id: string, size = 1600) =>
-  `https://drive.google.com/thumbnail?id=${id}&sz=w${size}`;
-const driveView = (id: string) =>
-  `https://drive.google.com/uc?export=view&id=${id}`;
-
 
 function fileIcon(title?: string, mimeType?: string) {
   const t = (title || "").toLowerCase();
@@ -84,7 +78,6 @@ function TripDetail({ id }: { id: string }) {
   const [expMsg, setExpMsg] = useState("");
   const [notFound, setNotFound] = useState(false);
 
-  // lightbox index
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   const isOwner =
@@ -119,7 +112,7 @@ function TripDetail({ id }: { id: string }) {
       if (!alive) return;
       setTrip(t);
 
-      // MEDIA – szerver szűri láthatóság szerint
+      // MEDIA – szerver már szűri láthatóság szerint
       const m = await fetch(`/api/media/list?trip_id=${id}`, { cache: "no-store" })
         .then((x) => x.json())
         .catch(() => ({ items: [] }));
@@ -175,17 +168,19 @@ function TripDetail({ id }: { id: string }) {
 
   async function onUploadImages(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+
+    const form = e.currentTarget as HTMLFormElement;
+    const fileInput = form.querySelector('input[name="file"]') as HTMLInputElement | null;
+    const selectedCount = fileInput?.files?.length || 0;
+
+    if (selectedCount === 0) {
+      setUploadMsg("Válassz legalább egy képfájlt.");
+      return;
+    }
     if (remainingImageSlots <= 0) {
       setUploadMsg("Elérted a 3 képes limitet ehhez az úthoz.");
       return;
     }
-
-    const form = e.currentTarget as HTMLFormElement;
-    const fd = new FormData(form);
-
-    // kliensoldali fájldarabszám korlát
-    const fileInput = form.querySelector('input[name="file"]') as HTMLInputElement | null;
-    const selectedCount = fileInput?.files?.length || 0;
     if (selectedCount > remainingImageSlots) {
       setUploadMsg(`Legfeljebb ${remainingImageSlots} képet tölthetsz fel most.`);
       return;
@@ -193,6 +188,7 @@ function TripDetail({ id }: { id: string }) {
 
     setUploadMsg("Feltöltés…");
 
+    const fd = new FormData(form);
     fd.append("tripId", String(id));
     fd.append("type", "file");
     fd.append("category", "image");
@@ -220,11 +216,19 @@ function TripDetail({ id }: { id: string }) {
 
   async function onUploadDocs(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setUploadMsg("Feltöltés…");
 
     const form = e.currentTarget as HTMLFormElement;
-    const fd = new FormData(form);
+    const fileInput = form.querySelector('input[name="file"]') as HTMLInputElement | null;
+    const selectedCount = fileInput?.files?.length || 0;
 
+    if (selectedCount === 0) {
+      setUploadMsg("Válassz legalább egy fájlt a dokumentumokhoz.");
+      return;
+    }
+
+    setUploadMsg("Feltöltés…");
+
+    const fd = new FormData(form);
     fd.append("tripId", String(id));
     fd.append("type", "file");
     fd.append("category", "document");
@@ -377,6 +381,7 @@ function TripDetail({ id }: { id: string }) {
                 name="file"
                 accept="image/*"
                 multiple
+                required
                 disabled={remainingImageSlots === 0}
               />
               <input type="text" name="title" placeholder="Cím (opcionális)" />
@@ -411,81 +416,79 @@ function TripDetail({ id }: { id: string }) {
             }}
           >
             {images.map((m, i) => {
-  const thumb = `https://drive.google.com/thumbnail?id=${m.drive_file_id}&sz=w1600`;
-  const canDelete =
-    (!!m.uploader_user_id &&
-      !!sess?.user?.email &&
-      m.uploader_user_id.toLowerCase() === sess.user.email.toLowerCase()) ||
-    isOwner;
+              const thumb = `/api/media/thumb/${m.drive_file_id}?w=1600`;
+              const canDelete =
+                (!!m.uploader_user_id &&
+                  !!sess?.user?.email &&
+                  m.uploader_user_id.toLowerCase() === sess.user.email.toLowerCase()) ||
+                isOwner;
+              return (
+                <div key={m.id} style={{ display: "grid", gap: 6 }}>
+                  {/* ratio wrapper (4:3) – mobilbarát */}
+                  <button
+                    onClick={() => setLightboxIndex(i)}
+                    title={m.title || "Kép megnyitása"}
+                    style={{
+                      border: "none",
+                      padding: 0,
+                      background: "transparent",
+                      cursor: "zoom-in",
+                      display: "block",
+                      width: "100%",
+                    }}
+                  >
+                    <div
+                      style={{
+                        position: "relative",
+                        width: "100%",
+                        paddingTop: "75%",
+                        background: "#f7f7f7",
+                        borderRadius: 8,
+                        overflow: "hidden",
+                      }}
+                    >
+                      <img
+                        src={thumb}
+                        alt={m.title || "kép"}
+                        loading="lazy"
+                        style={{
+                          position: "absolute",
+                          inset: 0,
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                          display: "block",
+                        }}
+                        onError={(ev) => {
+                          const img = ev.currentTarget as HTMLImageElement;
+                          if (!img.dataset.fallback) {
+                            img.dataset.fallback = "1";
+                            img.src = `https://drive.google.com/uc?export=view&id=${m.drive_file_id}`;
+                          }
+                        }}
+                      />
+                    </div>
+                  </button>
 
-  return (
-    <div key={m.id} style={{ display: "grid", gap: 6 }}>
-      {/* Kártya: ratio-wrap (75% = 4:3) */}
-      <button
-        onClick={() => setLightboxIndex(i)}
-        title={m.title || "Kép megnyitása"}
-        style={{
-          border: "none",
-          padding: 0,
-          background: "transparent",
-          cursor: "zoom-in",
-          display: "block",
-          width: "100%",
-        }}
-      >
-        <div
-          style={{
-            position: "relative",
-            width: "100%",
-            paddingTop: "75%", // 4:3 arány – mobilon is működik
-            background: "#f7f7f7",
-            borderRadius: 8,
-            overflow: "hidden",
-          }}
-        >
-          <img
-            src={thumb}
-            alt={m.title || "kép"}
-            loading="lazy"
-            style={{
-              position: "absolute",
-              inset: 0,
-              width: "100%",
-              height: "100%",
-              objectFit: "cover",
-              display: "block",
-            }}
-            onError={(ev) => {
-              const img = ev.currentTarget as HTMLImageElement;
-              if (!img.dataset.fallback) {
-                img.dataset.fallback = "1";
-                img.src = `https://drive.google.com/uc?export=view&id=${m.drive_file_id}`;
-              }
-            }}
-          />
-        </div>
-      </button>
-
-      {canDelete && (
-        <button
-          onClick={() => onDeleteMedia(m.id)}
-          style={{
-            padding: "6px 10px",
-            border: "1px solid #e33",
-            borderRadius: 6,
-            background: "#fff",
-            color: "#e33",
-            cursor: "pointer",
-            justifySelf: "start",
-          }}
-        >
-          Törlés
-        </button>
-      )}
-    </div>
-  );
-})}
-
+                  {canDelete && (
+                    <button
+                      onClick={() => onDeleteMedia(m.id)}
+                      style={{
+                        padding: "6px 10px",
+                        border: "1px solid #e33",
+                        borderRadius: 6,
+                        background: "#fff",
+                        color: "#e33",
+                        cursor: "pointer",
+                        justifySelf: "start",
+                      }}
+                    >
+                      Törlés
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -504,18 +507,17 @@ function TripDetail({ id }: { id: string }) {
               }}
             >
               <img
-  src={driveThumb(images[lightboxIndex].drive_file_id, 2400)}
-  alt={images[lightboxIndex].title || ""}
-  style={{ maxWidth: "92vw", maxHeight: "90vh", objectFit: "contain" }}
-  onError={(ev) => {
-    const img = ev.currentTarget as HTMLImageElement;
-    if (!img.dataset.fallback) {
-      img.dataset.fallback = "1";
-      img.src = driveView(images[lightboxIndex].drive_file_id);
-    }
-  }}
-/>
-
+                src={`/api/media/thumb/${images[lightboxIndex].drive_file_id}?w=2400`}
+                alt={images[lightboxIndex].title || ""}
+                style={{ maxWidth: "92vw", maxHeight: "90vh", objectFit: "contain" }}
+                onError={(ev) => {
+                  const img = ev.currentTarget as HTMLImageElement;
+                  if (!img.dataset.fallback) {
+                    img.dataset.fallback = "1";
+                    img.src = `https://drive.google.com/uc?export=view&id=${images[lightboxIndex].drive_file_id}`;
+                  }
+                }}
+              />
             </div>
           </dialog>
         )}
@@ -533,6 +535,7 @@ function TripDetail({ id }: { id: string }) {
                 name="file"
                 accept=".pdf,.doc,.docx,.xls,.xlsx,.ods,.txt,image/*"
                 multiple
+                required
               />
               <input type="text" name="title" placeholder="Cím (opcionális)" />
               <select name="media_visibility" defaultValue="private" title="Láthatóság">
