@@ -30,20 +30,25 @@ export default function SiteHeader() {
             <button
   onClick={(e) => {
     e.preventDefault();
-    // próbáld programozottan
-    void import("next-auth/react").then(({ signIn }) =>
-      signIn("google", { callbackUrl: "/" })
-    ).catch(() => {
-      // biztos fallback: teljes navigáció
-      window.location.href = "/api/auth/signin?callbackUrl=/";
-    });
+    // 1) programozott login
+    void import("next-auth/react")
+      .then(({ signIn }) => signIn("google", { callbackUrl: "/" }))
+      .catch(() => {
+        // 2) biztos fallback: teljes navigáció
+        window.location.href = "/api/auth/signin?callbackUrl=/";
+      });
+
+    // 3) extra biztonsági fallback 800ms után
+    setTimeout(() => {
+      if (!location.pathname.startsWith("/api/auth")) {
+        window.location.href = "/api/auth/signin?callbackUrl=/";
+      }
+    }, 800);
   }}
   className="text-sm px-3 py-1 rounded-md bg-blue-600 text-white hover:bg-blue-700"
-  title="Bejelentkezés"
 >
   Bejelentkezés
 </button>
-
           )}
         </nav>
       </div>
