@@ -42,6 +42,12 @@ type Expense = {
 };
 
 // ---- helpers ----------------------------------------------------
+// Drive image helpers
+const driveThumb = (id: string, size = 1600) =>
+  `https://drive.google.com/thumbnail?id=${id}&sz=w${size}`;
+const driveView = (id: string) =>
+  `https://drive.google.com/uc?export=view&id=${id}`;
+
 
 function fileIcon(title?: string, mimeType?: string) {
   const t = (title || "").toLowerCase();
@@ -428,11 +434,20 @@ function TripDetail({ id }: { id: string }) {
                     title={m.title || "Kép megnyitása"}
                   >
                     <img
-                      src={thumb}
-                      alt={m.title || "kép"}
-                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                      loading="lazy"
-                    />
+  src={driveThumb(m.drive_file_id, 1600)}
+  alt={m.title || "kép"}
+  loading="lazy"
+  style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+  onError={(ev) => {
+    // ha a thumbnail nem jön, próbáljuk meg a uc?export=view-t
+    const img = ev.currentTarget as HTMLImageElement;
+    if (!img.dataset.fallback) {
+      img.dataset.fallback = "1";
+      img.src = driveView(m.drive_file_id);
+    }
+  }}
+/>
+
                   </button>
 
                   {canDelete && (
@@ -472,10 +487,18 @@ function TripDetail({ id }: { id: string }) {
               }}
             >
               <img
-                src={`/api/media/file/${images[lightboxIndex].drive_file_id}`}
-                alt={images[lightboxIndex].title || ""}
-                style={{ maxWidth: "92vw", maxHeight: "90vh", objectFit: "contain" }}
-              />
+  src={driveThumb(images[lightboxIndex].drive_file_id, 2400)}
+  alt={images[lightboxIndex].title || ""}
+  style={{ maxWidth: "92vw", maxHeight: "90vh", objectFit: "contain" }}
+  onError={(ev) => {
+    const img = ev.currentTarget as HTMLImageElement;
+    if (!img.dataset.fallback) {
+      img.dataset.fallback = "1";
+      img.src = driveView(images[lightboxIndex].drive_file_id);
+    }
+  }}
+/>
+
             </div>
           </dialog>
         )}
