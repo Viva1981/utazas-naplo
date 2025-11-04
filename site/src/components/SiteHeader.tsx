@@ -6,7 +6,7 @@ export default function SiteHeader() {
   const { data: session, status } = useSession();
 
   return (
-    <header className="sticky top-0 z-40 bg-white/70 backdrop-blur-md border-b border-gray-200">
+    <header className="fixed top-0 left-0 right-0 z-[9999] pointer-events-auto bg-white/80 backdrop-blur-md border-b border-gray-200">
       <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
         <a href="/" className="font-semibold tracking-tight text-gray-800">
           Utazás Napló
