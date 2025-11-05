@@ -140,27 +140,37 @@ function TripDetail({ id }: { id: string }) {
   }
 
   // --- Képek vs. Doksik: CATEGORY az elsődleges, MIME fallback ----------------
-  const images = useMemo(
-    () =>
-      media.filter(
-        (m) =>
-          !m.archived_at &&
-          (m.category === "image" ||
-            (!m.category && (m.mimeType || "").toLowerCase().startsWith("image/")))
-      ),
-    [media]
-  );
+  /* ======= Képek / Dokumentumok leválogatás ======= */
+const looksLikeImageByName = (name?: string) =>
+  !!(name && /\.(jpe?g|png|webp|gif)$/i.test(name));
 
-  const documents = useMemo(
-    () =>
-      media.filter(
-        (m) =>
-          !m.archived_at &&
-          (m.category === "document" ||
-            (!m.category && !(m.mimeType || "").toLowerCase().startsWith("image/")))
-      ),
-    [media]
-  );
+const images = useMemo(
+  () =>
+    media.filter(
+      (m) =>
+        !m.archived_at &&
+        (
+          m.category === "image" ||
+          (m.mimeType || "").toLowerCase().startsWith("image/") ||
+          looksLikeImageByName(m.title)
+        )
+    ),
+  [media]
+);
+
+const documents = useMemo(
+  () =>
+    media.filter(
+      (m) =>
+        !m.archived_at &&
+        !(
+          m.category === "image" ||
+          (m.mimeType || "").toLowerCase().startsWith("image/") ||
+          looksLikeImageByName(m.title)
+        )
+    ),
+  [media]
+);
 
   // --- Upload (max 3 kép a „Fotók”-hoz) -------------------------------------
   const imageCount = images.length;
