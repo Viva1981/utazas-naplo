@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import TripDocuments_FORCE from "@/components/TripDocuments_FORCE";
 
 // segédfüggvények
 const looksLikeImageByName = (name?: string) =>
