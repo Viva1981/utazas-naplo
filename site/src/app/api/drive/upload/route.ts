@@ -135,7 +135,7 @@ export async function POST(req: Request) {
   if (!files.length) return NextResponse.json({ error: "Missing file" }, { status: 400 });
 
   const titleFromForm = (form.get("title") as string) || "";
-  const explicitCategory = ((form.get("category") as string) || "").toLowerCase();
+  const explicitCategory = ((form.get("category") as string) || "").toLowerCase(); // "image" | "document" | ""
   const explicitVisibility = ((form.get("media_visibility") as string) || "").toLowerCase();
 
   const rootFolderId = process.env.DRIVE_UPLOAD_FOLDER_ID || process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID || "";
@@ -167,15 +167,21 @@ export async function POST(req: Request) {
   }
   // ---- /TULAJDONOS-ELLENŐRZÉS ----
 
-  // ---- MIME & MÉRET VALIDÁLÁS (még feltöltés ELŐTT) ----
+  // ---- MIME & MÉRET VALIDÁLÁS (feltöltés ELŐTT) ----
   for (const file of files) {
     const clientMime = (file.type || "").toLowerCase();
-    const category = (explicitCategory || (clientMime.startsWith("image/") ? "image" : "document")) as "image" | "document";
-
-    // fájlméret, ha elérhető
     const size = typeof (file as any).size === "number" ? (file as any).size : undefined;
 
-    if (category === "image") {
+    // A felhasználó szándéka: form szerinti kategória élvez elsőbbséget:
+    // - ha explicitCategory === "document": képet is elfogadunk dokumentumként
+    // - különben: MIME/kiterjesztés alapján döntünk
+    const intendedCategory: "image" | "document" =
+      explicitCategory === "image" || explicitCategory === "document"
+        ? (explicitCategory as any)
+        : (clientMime.startsWith("image/") ? "image" : "document");
+
+    if (intendedCategory === "image") {
+      // Kép: csak az engedélyezett image MIME-ok, kép méretlimittel
       if (!ALLOWED_IMAGE_MIME.has(clientMime)) {
         return NextResponse.json(
           { error: `Tiltott kép típus: ${clientMime || "ismeretlen"}. Engedélyezett: ${Array.from(ALLOWED_IMAGE_MIME).join(", ")}` },
@@ -189,17 +195,34 @@ export async function POST(req: Request) {
         );
       }
     } else {
-      if (!ALLOWED_DOC_MIME.has(clientMime)) {
-        return NextResponse.json(
-          { error: `Tiltott dokumentum típus: ${clientMime || "ismeretlen"}. Engedélyezett: ${Array.from(ALLOWED_DOC_MIME).join(", ")}` },
-          { status: 415 }
-        );
-      }
-      if (size !== undefined && size > MAX_DOC_BYTES) {
-        return NextResponse.json(
-          { error: `Túl nagy dokumentum: ${(size / (1024 * 1024)).toFixed(1)} MB. Limit: ${MAX_DOC_BYTES / (1024 * 1024)} MB` },
-          { status: 413 }
-        );
+      // Dokumentum: ha valójában image/*, azt is elfogadjuk (Dokumentumok űrlap esetén)
+      if (clientMime.startsWith("image/")) {
+        if (!ALLOWED_IMAGE_MIME.has(clientMime)) {
+          return NextResponse.json(
+            { error: `Tiltott dokumentum (kép) típus: ${clientMime}. Engedélyezett képek: ${Array.from(ALLOWED_IMAGE_MIME).join(", ")}` },
+            { status: 415 }
+          );
+        }
+        if (size !== undefined && size > MAX_IMAGE_BYTES) {
+          return NextResponse.json(
+            { error: `Túl nagy dokumentum (kép): ${(size / (1024 * 1024)).toFixed(1)} MB. Limit: ${MAX_IMAGE_BYTES / (1024 * 1024)} MB` },
+            { status: 413 }
+          );
+        }
+      } else {
+        // Nem kép: klasszikus dokumentum MIME-ok
+        if (!ALLOWED_DOC_MIME.has(clientMime)) {
+          return NextResponse.json(
+            { error: `Tiltott dokumentum típus: ${clientMime || "ismeretlen"}. Engedélyezett: ${Array.from(ALLOWED_DOC_MIME).join(", ")}` },
+            { status: 415 }
+          );
+        }
+        if (size !== undefined && size > MAX_DOC_BYTES) {
+          return NextResponse.json(
+            { error: `Túl nagy dokumentum: ${(size / (1024 * 1024)).toFixed(1)} MB. Limit: ${MAX_DOC_BYTES / (1024 * 1024)} MB` },
+            { status: 413 }
+          );
+        }
       }
     }
   }
@@ -209,11 +232,13 @@ export async function POST(req: Request) {
   const { folderId: userFolderId } = await ensureUserFolder(accessToken, uploaderUserId.toLowerCase(), uploaderName, rootFolderId);
   const { folderId: tripFolderId } = await ensureTripFolder(accessToken, tripId, tripTitle, userFolderId);
 
-  // 3-image/trip limit
+  // 3-image/trip limit (csak az image kategóriát számoljuk)
   const mediaRes = await sheetsGet(MEDIA_RANGE);
   const mediaRows: string[][] = mediaRes.values ?? [];
   const existingImagesCount = mediaRows.filter((r) => r[1] === tripId && !r[12] && (r[13] || "").toLowerCase() === "image").length;
-  const selectedImageCount = files.filter((f) => (explicitCategory || (f.type || "").toLowerCase().startsWith("image/") ? "image" : "document") === "image").length;
+  const selectedImageCount = files.filter((f) =>
+    (explicitCategory ? explicitCategory === "image" : (f.type || "").toLowerCase().startsWith("image/"))
+  ).length;
   if (existingImagesCount + selectedImageCount > 3) {
     const remaining = Math.max(0, 3 - existingImagesCount);
     return NextResponse.json({ error: `A képek száma elérné a limitet (3/trip). Már van ${existingImagesCount}, most ${selectedImageCount}-et jelöltél ki. Még ${remaining} tölthető.` }, { status: 422 });
@@ -224,11 +249,17 @@ export async function POST(req: Request) {
   const results: any[] = [];
 
   for (const file of files) {
-    const mime = (file.type || "").toLowerCase();
-    const category = (explicitCategory || (mime.startsWith("image/") ? "image" : "document")) as "image" | "document";
-    const media_visibility = (explicitVisibility || (category === "document" ? "private" : "public")) as "public" | "private";
+    const clientMime = (file.type || "").toLowerCase();
 
-    const uploaded = await driveUploadFile(accessToken, file, titleFromForm || file.name, tripFolderId);
+    // Végleges kategória: a form kérése élvez elsőbbséget
+    const intendedCategory: "image" | "document" =
+      explicitCategory === "image" || explicitCategory === "document"
+        ? (explicitCategory as any)
+        : (clientMime.startsWith("image/") ? "image" : "document");
+
+    const media_visibility = (explicitVisibility || (intendedCategory === "document" ? "private" : "public")) as "public" | "private";
+
+    const uploaded = await driveUploadFile(accessToken, file, titleFromForm || (file as any).name, tripFolderId);
 
     if (media_visibility === "public") {
       try { await driveSetAnyoneReader(accessToken, uploaded.id); } catch (e) { console.warn("Drive public perm fail:", e); }
@@ -239,9 +270,9 @@ export async function POST(req: Request) {
     const id = `${tripId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const row: string[] = [
       id, tripId, "file",
-      titleFromForm || meta.name || file.name || "",
+      titleFromForm || meta.name || (file as any).name || "",
       uploaded.id,
-      meta.mimeType || file.type || "",
+      meta.mimeType || clientMime || "",
       meta.webViewLink || "",
       meta.webContentLink || "",
       meta.thumbnailLink || "",
@@ -249,12 +280,12 @@ export async function POST(req: Request) {
       nowIso,
       uploaderUserId,
       "",
-      category,
+      intendedCategory,           // << itt mindig a SZÁNDÉK SZERINTI kategória
       media_visibility,
     ];
     await sheetsAppend(MEDIA_RANGE, row);
 
-    results.push({ id, drive_file_id: uploaded.id, title: row[3], mimeType: row[5], category, media_visibility });
+    results.push({ id, drive_file_id: uploaded.id, title: row[3], mimeType: row[5], category: intendedCategory, media_visibility });
   }
 
   return NextResponse.json({ ok: true, items: results });
