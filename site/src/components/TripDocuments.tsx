@@ -12,8 +12,8 @@ type Media = {
   archived_at?: string;
   category?: "image" | "document" | "";
   media_visibility?: "public" | "private";
-  thumbnailLink?: string; // Media!I oszlopból
-  webViewLink?: string;   // Media!G oszlopból
+  thumbnailLink?: string;
+  webViewLink?: string;
 };
 
 type Props = {
@@ -42,17 +42,10 @@ export default function TripDocuments({
     [documents, isOwner]
   );
 
-  // Lightbox / Preview modal
   const [open, setOpen] = React.useState(false);
   const [active, setActive] = React.useState<Media | null>(null);
-  const onOpen = (m: Media) => {
-    setActive(m);
-    setOpen(true);
-  };
-  const onClose = () => {
-    setOpen(false);
-    setTimeout(() => setActive(null), 200);
-  };
+  const onOpen = (m: Media) => { setActive(m); setOpen(true); };
+  const onClose = () => { setOpen(false); setTimeout(() => setActive(null), 200); };
 
   if (!isOwner && visibleDocs.length === 0) return null;
 
@@ -72,6 +65,9 @@ export default function TripDocuments({
           onSubmit={onUploadDocs}
           className="flex flex-wrap gap-4 items-center border p-4 rounded-lg bg-gray-50 mb-6"
         >
+          {/* FONTOS: ettől marad dokumentum még képnél is */}
+          <input type="hidden" name="category" value="document" />
+
           <input
             type="file"
             name="file"
@@ -115,9 +111,6 @@ export default function TripDocuments({
             const isPdf = mime === "application/pdf";
             const isPublic = m.media_visibility === "public";
 
-            // Kártya thumbs:
-            // - képekhez saját /thumb proxy
-            // - nem képnél: Drive thumbnail ha van (DOCX/XLSX is kap előnézetet a Drive-tól)
             const thumb = isImage
               ? `/api/media/thumb/${m.drive_file_id}?w=1000`
               : (m.thumbnailLink
@@ -127,9 +120,7 @@ export default function TripDocuments({
             return (
               <article
                 key={m.id}
-                className={`group border rounded-xl shadow-sm hover:shadow-lg transition overflow-hidden ${
-                  isPublic ? "bg-white" : "bg-gray-50"
-                } cursor-pointer`}
+                className={`group border rounded-xl shadow-sm hover:shadow-lg transition overflow-hidden ${isPublic ? "bg-white" : "bg-gray-50"} cursor-pointer`}
                 onClick={() => onOpen(m)}
                 aria-label={`Dokumentum: ${m.title || m.mimeType || "dokumentum"}`}
               >
@@ -172,7 +163,8 @@ export default function TripDocuments({
                   <h3 className="text-sm font-semibold truncate">
                     {m.title || m.mimeType || "Dokumentum"}
                   </h3>
-                  {/* Nincs letöltés link – kattintás a kártyára a nagy megnyitáshoz */}
+
+                  {/* NINCS letöltés link – kattintás a kártyára a nagy előnézethez */}
                   {isOwner && (
                     <button
                       onClick={(e) => { e.stopPropagation(); onDeleteMedia(m.id); }}
@@ -189,7 +181,6 @@ export default function TripDocuments({
         </div>
       )}
 
-      {/* Nagy előnézet (Drive-szerű) */}
       {open && active && (
         <div
           className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
@@ -220,7 +211,6 @@ function PreviewBody({ media }: { media: Media }) {
   const isImage = mime.startsWith("image/") || looksLikeImageByName(media.title);
   const isPdf = mime === "application/pdf";
 
-  // Drive beágyazott nézet: /file/d/<id>/preview
   const drivePreview = `https://drive.google.com/file/d/${media.drive_file_id}/preview`;
 
   if (isImage) {
@@ -233,7 +223,6 @@ function PreviewBody({ media }: { media: Media }) {
     );
   }
 
-  // PDF + Office + minden más: Drive preview iframe (nem letölt!)
   return (
     <iframe
       src={drivePreview}
