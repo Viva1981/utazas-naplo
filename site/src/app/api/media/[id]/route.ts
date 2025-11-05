@@ -1,84 +1,107 @@
-import { NextRequest, NextResponse } from "next/server";
+// site/src/app/api/media/[id]/route.ts  (TELJES CSERE)
+
+import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { sheetsGet, sheetsUpdateRange } from "@/lib/sheets";
-import { driveDeleteFile } from "@/lib/drive";
+import { sheetsGet } from "@/lib/sheets";
 
-// Media: A..O  (A:id B:trip_id C:type D:title E:drive_file_id F:mimeType G:webViewLink H:webContentLink
-//               I:thumbnailLink J:size K:created_at L:uploader_user_id M:archived_at N:category O:media_visibility)
-const MEDIA_RANGE_ALL = "Media!A2:O";
+const MEDIA_RANGE = "Media!A2:O";
+// Media oszlopok (index):
+// 0:id | 1:trip_id | 2:type | 3:title | 4:drive_file_id | 5:mimeType | 6:webViewLink | 7:webContentLink
+// 8:thumbnailLink | 9:size | 10:createdAt | 11:uploaderUserId | 12:deleted? | 13:category | 14:media_visibility
 
-type MediaRow = string[];
+const TRIPS_RANGE = "Trips!A2:I";
+// Trips oszlopok (index):
+// 0:id | 1:title | 2:start | 3:end | 4:destination | 5:owner_user_id | 6:folderId | 7:folderLink | 8:visibility
 
-// GET: (opcionális) visszaadja a media sort
+const norm = (s?: string) => (s ?? "").trim().toLowerCase();
+
 export async function GET(
-  _req: NextRequest,
+  _req: Request,
   ctx: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await ctx.params; // A oszlopos saját media id (nem a drive id)
-  const res = await sheetsGet(MEDIA_RANGE_ALL);
-  const rows: MediaRow[] = res.values ?? [];
-  const row = rows.find((r) => (r[0] || "") === id);
-  if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  return NextResponse.json({
-    id: row[0], trip_id: row[1], title: row[3],
-    drive_file_id: row[4], mimeType: row[5],
-    uploader_user_id: row[11], archived_at: row[12],
-    category: row[13], media_visibility: row[14],
-  });
-}
-
-// DELETE: csak tulaj vagy feltöltő törölhet
-export async function DELETE(
-  _req: NextRequest,
-  ctx: { params: Promise<{ id: string }> }
-) {
-  const session = await getServerSession(authOptions);
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const requester =
-    ((session as any)?.userId as string | undefined) ||
-    ((session?.user as any)?.email as string | undefined) ||
-    "";
-  const requesterLc = (requester || "").toLowerCase();
-
-  const { id } = await ctx.params; // media.id (A oszlop)
-  if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
-
-  const res = await sheetsGet(MEDIA_RANGE_ALL);
-  const rows: MediaRow[] = res.values ?? [];
-  const idx = rows.findIndex((r) => (r[0] || "") === id);
-  if (idx === -1) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  const row = rows[idx];
-  const driveId = row[4];                          // E
-  const uploaderLc = (row[11] || "").toLowerCase(); // L
-  const archivedAt = row[12];                      // M
-
-  // csak a feltöltő törölhet (ha akarsz tulajt is, itt bővíthető)
-  const canDelete = !!uploaderLc && uploaderLc === requesterLc;
-  if (!canDelete) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-
-  // Drive-ból törlés (ha nincs jog/hiba, ne álljon meg a sor frissítése)
-  try {
-    const accessToken =
-      (session as any).accessToken ||
-      (session as any)?.user?.accessToken ||
-      (session as any)?.user?.token ||
-      null;
-    if (accessToken && driveId && !archivedAt) {
-      await driveDeleteFile(accessToken, driveId);
-    }
-  } catch (e) {
-    console.warn("Drive delete warning:", e);
+  const { id } = await ctx.params;
+  const wanted = (id || "").trim();
+  if (!wanted) {
+    return NextResponse.json({ error: "Missing id" }, { status: 400 });
   }
 
-  // Media sor "archiválása" (M oszlopba timestamp)
-  const sheetRow = idx + 2; // fejléc miatt +2
-  await sheetsUpdateRange(`Media!M${sheetRow}:M${sheetRow}`, [[new Date().toISOString()]]);
+  // --- Media beolvasása ---
+  const { values: mediaRows } = await sheetsGet(MEDIA_RANGE);
+  const mrows = (mediaRows ?? []) as string[][];
+  const row = mrows.find((r) => norm(r?.[0]) === norm(wanted) && !(r?.[12] ?? "")); // ne legyen törölt
 
-  return NextResponse.json({ ok: true, id });
+  if (!row) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const media = {
+    id: row[0],
+    trip_id: row[1],
+    type: row[2],
+    title: row[3],
+    drive_file_id: row[4],
+    mimeType: row[5],
+    webViewLink: row[6],
+    webContentLink: row[7],
+    thumbnailLink: row[8],
+    size: row[9],
+    createdAt: row[10],
+    uploaderUserId: (row[11] || "").toLowerCase(),
+    category: (row[13] || "").toLowerCase(),
+    media_visibility: ((row[14] || "private") as "public" | "private"),
+  };
+
+  // --- Jogosultság: public oké; private → uploader VAGY trip owner ---
+  if (media.media_visibility !== "public") {
+    const session = await getServerSession(authOptions);
+    const me =
+      ((((session as any)?.userId) as string | undefined) ||
+        (((session?.user as any)?.email) as string | undefined) ||
+        "")
+        .trim()
+        .toLowerCase();
+
+    if (!me) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    // ha az uploader vagyok → oké
+    const isUploader = me === media.uploaderUserId;
+
+    // ha a Trip tulaja vagyok → oké
+    let isTripOwner = false;
+    if (!isUploader) {
+      const { values: tripRows } = await sheetsGet(TRIPS_RANGE);
+      const trows = (tripRows ?? []) as string[][];
+      const t = trows.find((r) => norm(r?.[0]) === norm(media.trip_id));
+      const owner = (t?.[5] || "").toLowerCase();
+      isTripOwner = !!owner && owner === me;
+    }
+
+    if (!isUploader && !isTripOwner) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+  }
+
+  // --- Válasz (metaadatok) ---
+  return NextResponse.json(
+    {
+      id: media.id,
+      trip_id: media.trip_id,
+      type: media.type,
+      title: media.title,
+      drive_file_id: media.drive_file_id,
+      mimeType: media.mimeType,
+      webViewLink: media.webViewLink,
+      webContentLink: media.webContentLink,
+      thumbnailLink: media.thumbnailLink,
+      size: media.size,
+      createdAt: media.createdAt,
+      uploaderUserId: media.uploaderUserId,
+      category: media.category,
+      media_visibility: media.media_visibility,
+    },
+    { headers: { "Cache-Control": "no-store" } }
+  );
 }
-
-// (ha kell) PATCH ide tehető később (pl. cím módosítás)
