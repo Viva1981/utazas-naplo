@@ -1,23 +1,26 @@
+// site/src/app/api/trips/get/[id]/route.ts  (TELJES CSERE)
+
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 import { sheetsGet } from "@/lib/sheets";
 
 const TRIPS_SHEET = "Trips!A2:I"; // id | title | start | end | destination | owner | folderId | folderLink | visibility
 
 export async function GET(
   _req: Request,
-  ctx: { params: Promise<{ id: string }> } // <<< params Promise
+  ctx: { params: Promise<{ id: string }> } // Next params Promise
 ) {
-  // params várakoztatása
   const { id } = await ctx.params;
   const wanted = (id || "").trim();
   const norm = (s?: string) => (s ?? "").trim().toLowerCase();
 
   try {
-    // { range, values }
+    // Beolvassuk a Trips táblát
     const { values } = await sheetsGet(TRIPS_SHEET);
     const rows: string[][] = values ?? [];
 
-    const row = rows.find(r => norm(r?.[0]) === norm(wanted));
+    const row = rows.find((r) => norm(r?.[0]) === norm(wanted));
     if (!row) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
@@ -34,16 +37,38 @@ export async function GET(
       visibility,
     ] = row;
 
+    const tripVisibility = (visibility || "private").toLowerCase() as
+      | "public"
+      | "private";
+
+    // Jogosultság: ha privát, csak a tulaj láthatja
+    let isOwner = false;
+    if (tripVisibility !== "public") {
+      const session = await getServerSession(authOptions);
+      const me =
+        (((session as any)?.userId as string | undefined) ||
+          ((session?.user as any)?.email as string | undefined) ||
+          ""
+        ).toLowerCase();
+
+      isOwner = !!me && (owner_user_id || "").toLowerCase() === me;
+
+      if (!isOwner) {
+        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      }
+    }
+
+    // Válasz: (ha szeretnéd, itt elrejthetjük a drive_folder_* mezőket publikus nézetben)
     return NextResponse.json({
       id: tripId,
       title,
       start_date,
       end_date,
       destination,
-      owner_user_id,     // kliens oldali jogosultság ellenőrzéshez
+      owner_user_id,
       drive_folder_id,
       drive_folder_link,
-      visibility: visibility || "private",
+      visibility: tripVisibility,
     });
   } catch (err: any) {
     console.error("Trip get error:", err);
