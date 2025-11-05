@@ -11,7 +11,7 @@ import {
 } from "@/lib/drive";
 
 const MEDIA_RANGE = "Media!A2:O";
-const TRIPS_RANGE = "Trips!A2:I";
+const TRIPS_RANGE = "Trips!A2:I";   // 0:id | 1:title | ... | 5:owner email | 6:folderId | 7:folderLink | 8:visibility
 const USERS_RANGE = "Users!A2:D";
 
 export const runtime = "nodejs";
@@ -123,12 +123,29 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Hiányzik a DRIVE_UPLOAD_FOLDER_ID (vagy GOOGLE_DRIVE_ROOT_FOLDER_ID) ENV." }, { status: 500 });
   }
 
-  // Trip title (és ellenőrzés)
+  // ---- Trip beolvasása + TULAJDONOS-ELLENŐRZÉS ----
   const tripsRes = await sheetsGet(TRIPS_RANGE);
   const tripRows: string[][] = tripsRes.values ?? [];
   let tripTitle = "";
-  for (const r of tripRows) if (r[0] === tripId) { tripTitle = r[1] || ""; break; }
-  if (!tripTitle) return NextResponse.json({ error: `Trip not found: ${tripId}` }, { status: 404 });
+  let tripOwnerEmail = "";
+
+  for (const r of tripRows) {
+    if (r[0] === tripId) {
+      tripTitle = r[1] || "";
+      tripOwnerEmail = (r[5] || "").toLowerCase(); // 6. oszlop: owner e-mail
+      break;
+    }
+  }
+
+  if (!tripTitle) {
+    return NextResponse.json({ error: `Trip not found: ${tripId}` }, { status: 404 });
+  }
+
+  // *** CSAK A TULAJ TÖLTHET FEL ***
+  if (!tripOwnerEmail || tripOwnerEmail !== uploaderUserId.toLowerCase()) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  // ---- /TULAJDONOS-ELLENŐRZÉS ----
 
   // User mappa → Trip mappa (kényszerített szülővel)
   const { folderId: userFolderId } = await ensureUserFolder(accessToken, uploaderUserId.toLowerCase(), uploaderName, rootFolderId);
