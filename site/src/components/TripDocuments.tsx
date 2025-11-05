@@ -22,6 +22,9 @@ type Props = {
   uploadMsg?: string;
 };
 
+const looksLikeImageByName = (name?: string) =>
+  !!(name && /\.(jpe?g|png|webp|gif)$/i.test(name));
+
 export default function TripDocuments({
   documents,
   isOwner,
@@ -94,7 +97,7 @@ export default function TripDocuments({
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
           {visibleDocs.map((m) => {
             const mime = (m.mimeType || "").toLowerCase();
-            const isImage = mime.startsWith("image/");
+            const isImage = mime.startsWith("image/") || looksLikeImageByName(m.title);
             const isPdf = mime === "application/pdf";
             const isPublic = m.media_visibility === "public";
             const thumb = isImage ? `/api/media/thumb/${m.drive_file_id}?w=1000` : undefined;
