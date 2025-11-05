@@ -16,6 +16,25 @@ const USERS_RANGE = "Users!A2:D";
 
 export const runtime = "nodejs";
 
+// --- MIME & MÉRET LIMIT-EK ---
+const ALLOWED_IMAGE_MIME = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+]);
+
+const ALLOWED_DOC_MIME = new Set([
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
+]);
+
+const MAX_IMAGE_BYTES =
+  (parseInt(process.env.MAX_IMAGE_MB || "20", 10) || 20) * 1024 * 1024; // 20 MB
+const MAX_DOC_BYTES =
+  (parseInt(process.env.MAX_DOC_MB || "50", 10) || 50) * 1024 * 1024; // 50 MB
+// --- /MIME & MÉRET LIMIT-EK ---
+
 async function ensureUserFolder(accessToken: string, userId: string, userName: string, rootFolderId: string) {
   const usersRes = await sheetsGet(USERS_RANGE);
   const rows: string[][] = usersRes.values ?? [];
@@ -28,8 +47,9 @@ async function ensureUserFolder(accessToken: string, userId: string, userName: s
     const r = rows[i];
     if ((r[0] || "").toLowerCase() === userId.toLowerCase()) {
       rowIndex = i;
-      folderId = r[3] ? r[3] : r[2] || ""; // támogatjuk a te oszlopsorrendedet is
-      folderLink = r[4] ? r[4] : r[3] || ""; // ha van role oszlop, ne omoljon
+      // támogatjuk az eltérő oszlopsorrendet is
+      folderId = r[3] ? r[3] : r[2] || "";
+      folderLink = r[4] ? r[4] : r[3] || "";
       break;
     }
   }
@@ -147,6 +167,44 @@ export async function POST(req: Request) {
   }
   // ---- /TULAJDONOS-ELLENŐRZÉS ----
 
+  // ---- MIME & MÉRET VALIDÁLÁS (még feltöltés ELŐTT) ----
+  for (const file of files) {
+    const clientMime = (file.type || "").toLowerCase();
+    const category = (explicitCategory || (clientMime.startsWith("image/") ? "image" : "document")) as "image" | "document";
+
+    // fájlméret, ha elérhető
+    const size = typeof (file as any).size === "number" ? (file as any).size : undefined;
+
+    if (category === "image") {
+      if (!ALLOWED_IMAGE_MIME.has(clientMime)) {
+        return NextResponse.json(
+          { error: `Tiltott kép típus: ${clientMime || "ismeretlen"}. Engedélyezett: ${Array.from(ALLOWED_IMAGE_MIME).join(", ")}` },
+          { status: 415 }
+        );
+      }
+      if (size !== undefined && size > MAX_IMAGE_BYTES) {
+        return NextResponse.json(
+          { error: `Túl nagy kép: ${(size / (1024 * 1024)).toFixed(1)} MB. Limit: ${MAX_IMAGE_BYTES / (1024 * 1024)} MB` },
+          { status: 413 }
+        );
+      }
+    } else {
+      if (!ALLOWED_DOC_MIME.has(clientMime)) {
+        return NextResponse.json(
+          { error: `Tiltott dokumentum típus: ${clientMime || "ismeretlen"}. Engedélyezett: ${Array.from(ALLOWED_DOC_MIME).join(", ")}` },
+          { status: 415 }
+        );
+      }
+      if (size !== undefined && size > MAX_DOC_BYTES) {
+        return NextResponse.json(
+          { error: `Túl nagy dokumentum: ${(size / (1024 * 1024)).toFixed(1)} MB. Limit: ${MAX_DOC_BYTES / (1024 * 1024)} MB` },
+          { status: 413 }
+        );
+      }
+    }
+  }
+  // ---- /MIME & MÉRET VALIDÁLÁS ----
+
   // User mappa → Trip mappa (kényszerített szülővel)
   const { folderId: userFolderId } = await ensureUserFolder(accessToken, uploaderUserId.toLowerCase(), uploaderName, rootFolderId);
   const { folderId: tripFolderId } = await ensureTripFolder(accessToken, tripId, tripTitle, userFolderId);
@@ -187,7 +245,7 @@ export async function POST(req: Request) {
       meta.webViewLink || "",
       meta.webContentLink || "",
       meta.thumbnailLink || "",
-      String(meta.size ?? file.size ?? ""),
+      String(meta.size ?? (file as any).size ?? ""),
       nowIso,
       uploaderUserId,
       "",
