@@ -12,6 +12,8 @@ type Media = {
   archived_at?: string;
   category?: "image" | "document" | "";
   media_visibility?: "public" | "private";
+  thumbnailLink?: string; // Media!I oszlopból
+  webViewLink?: string;   // Media!G oszlopból
 };
 
 type Props = {
@@ -39,6 +41,18 @@ export default function TripDocuments({
         : documents.filter((d) => !d.archived_at && d.media_visibility === "public"),
     [documents, isOwner]
   );
+
+  // Lightbox / Preview modal
+  const [open, setOpen] = React.useState(false);
+  const [active, setActive] = React.useState<Media | null>(null);
+  const onOpen = (m: Media) => {
+    setActive(m);
+    setOpen(true);
+  };
+  const onClose = () => {
+    setOpen(false);
+    setTimeout(() => setActive(null), 200);
+  };
 
   if (!isOwner && visibleDocs.length === 0) return null;
 
@@ -100,14 +114,23 @@ export default function TripDocuments({
             const isImage = mime.startsWith("image/") || looksLikeImageByName(m.title);
             const isPdf = mime === "application/pdf";
             const isPublic = m.media_visibility === "public";
-            const thumb = isImage ? `/api/media/thumb/${m.drive_file_id}?w=1000` : undefined;
+
+            // Kártya thumbs:
+            // - képekhez saját /thumb proxy
+            // - nem képnél: Drive thumbnail ha van (DOCX/XLSX is kap előnézetet a Drive-tól)
+            const thumb = isImage
+              ? `/api/media/thumb/${m.drive_file_id}?w=1000`
+              : (m.thumbnailLink
+                  ? m.thumbnailLink.replace(/=s\d+$/i, "=s1000")
+                  : undefined);
 
             return (
               <article
                 key={m.id}
                 className={`group border rounded-xl shadow-sm hover:shadow-lg transition overflow-hidden ${
                   isPublic ? "bg-white" : "bg-gray-50"
-                }`}
+                } cursor-pointer`}
+                onClick={() => onOpen(m)}
                 aria-label={`Dokumentum: ${m.title || m.mimeType || "dokumentum"}`}
               >
                 <div className="relative aspect-[4/3] bg-gray-100 overflow-hidden">
@@ -125,10 +148,14 @@ export default function TripDocuments({
                       }}
                     />
                   ) : isPdf ? (
-                    <iframe
-                      src={`/api/media/file/${m.drive_file_id}`}
-                      title={m.title || "PDF dokumentum"}
-                      className="w-full h-full border-0"
+                    <div className="w-full h-full flex items-center justify-center bg-white text-red-600 text-xs">
+                      PDF előnézet
+                    </div>
+                  ) : thumb ? (
+                    <img
+                      src={thumb}
+                      alt={m.title || "Dokumentum előnézet"}
+                      className="w-full h-full object-contain bg-white"
                     />
                   ) : (
                     <div className="flex items-center justify-center h-full text-4xl">📄</div>
@@ -145,21 +172,11 @@ export default function TripDocuments({
                   <h3 className="text-sm font-semibold truncate">
                     {m.title || m.mimeType || "Dokumentum"}
                   </h3>
-
-                  <a
-                    href={`/api/media/file/${m.drive_file_id}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-blue-600 text-sm hover:underline"
-                    title="Megnyitás / letöltés"
-                  >
-                    Megnyitás / letöltés
-                  </a>
-
+                  {/* Nincs letöltés link – kattintás a kártyára a nagy megnyitáshoz */}
                   {isOwner && (
                     <button
-                      onClick={() => onDeleteMedia(m.id)}
-                      className="mt-2 text-xs text-red-600 border border-red-300 rounded-md px-3 py-1 hover:bg-red-50 transition self-start"
+                      onClick={(e) => { e.stopPropagation(); onDeleteMedia(m.id); }}
+                      className="mt-1 text-xs text-red-600 border border-red-300 rounded-md px-3 py-1 hover:bg-red-50 transition self-start"
                       title="Dokumentum törlése"
                     >
                       Törlés
@@ -171,6 +188,58 @@ export default function TripDocuments({
           })}
         </div>
       )}
+
+      {/* Nagy előnézet (Drive-szerű) */}
+      {open && active && (
+        <div
+          className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
+          onClick={onClose}
+        >
+          <div
+            className="relative bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[85vh] overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={onClose}
+              className="absolute top-3 right-3 z-10 bg-black/60 text-white rounded-full px-3 py-1 text-sm"
+              aria-label="Bezárás"
+            >
+              Bezárás ✕
+            </button>
+
+            <PreviewBody media={active} />
+          </div>
+        </div>
+      )}
     </section>
+  );
+}
+
+function PreviewBody({ media }: { media: Media }) {
+  const mime = (media.mimeType || "").toLowerCase();
+  const isImage = mime.startsWith("image/") || looksLikeImageByName(media.title);
+  const isPdf = mime === "application/pdf";
+
+  // Drive beágyazott nézet: /file/d/<id>/preview
+  const drivePreview = `https://drive.google.com/file/d/${media.drive_file_id}/preview`;
+
+  if (isImage) {
+    return (
+      <img
+        src={`/api/media/file/${media.drive_file_id}`}
+        alt={media.title || "Kép"}
+        className="w-full h-full object-contain bg-black"
+      />
+    );
+  }
+
+  // PDF + Office + minden más: Drive preview iframe (nem letölt!)
+  return (
+    <iframe
+      src={drivePreview}
+      title={media.title || "Dokumentum előnézet"}
+      className="w-full h-full border-0 bg-white"
+      allow="autoplay"
+    />
   );
 }
