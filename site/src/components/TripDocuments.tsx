@@ -51,8 +51,10 @@ export default function TripDocuments({
 
   return (
     <section className="max-w-5xl mx-auto mt-10 p-6 bg-white/80 backdrop-blur-md rounded-xl shadow-md">
+      // ... a fájl teteje változatlan
+
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-2xl font-semibold text-gray-800">Dokumentumok</h2>
+        <h2 className="text-2xl font-semibold text-gray-800">Dokumentumok — kártyanézet (próba)</h2>
         {isOwner ? (
           <span className="text-sm text-gray-500">Privát dokumentumokat csak te látod 🔒</span>
         ) : (
