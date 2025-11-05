@@ -4,22 +4,30 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 
-const { data: sess } = useSession();
+// ---- helpers (ezek maradhatnak modul-szinten) ----
+function fileIcon(title?: string, mimeType?: string) {
+  const t = (title || "").toLowerCase();
+  const mime = (mimeType || "").toLowerCase();
+  if (mime.includes("pdf") || t.endsWith(".pdf")) return "📄";
+  if (mime.includes("sheet") || /\.(xls|xlsx|ods)$/.test(t)) return "📊";
+  if (mime.includes("word") || /\.(doc|docx|odt)$/.test(t)) return "📝";
+  if (mime.startsWith("video/") || /\.(mp4|mov|mkv|webm)$/.test(t)) return "🎞️";
+  if (mime.startsWith("audio/") || /\.(mp3|wav|m4a|flac)$/.test(t)) return "🎵";
+  if (mime.startsWith("image/") || /\.(png|jpe?g|gif|webp|avif|heic|heif)$/i.test(t)) return "🖼️";
+  return "📎";
+}
 
-// segédfüggvények
 const looksLikeImageByName = (name?: string) =>
   !!(name && /\.(jpe?g|png|webp|gif)$/i.test(name));
 
 const isImageByMeta = (mime?: string, title?: string) =>
   (mime || "").toLowerCase().startsWith("image/") || looksLikeImageByName(title);
 
-// modál állapot a nagy előnézethez
-const [docPreview, setDocPreview] = useState<null | {
-  driveId: string;
-  title?: string;
-  mime?: string;
-}>(null);
-
+function niceDate(d?: string) {
+  if (!d) return "";
+  const [Y, M, D] = d.split("-");
+  return `${Y}.${M}.${D}`;
+}
 
 type Trip = {
   id: string;
@@ -86,7 +94,15 @@ export default function Page() {
 }
 
 function TripDetail({ id }: { id: string }) {
+  // ← ide jönnek a hookok
   const { data: sess } = useSession();
+
+  // Modál állapot a nagy előnézethez
+  const [docPreview, setDocPreview] = useState<null | {
+    driveId: string;
+    title?: string;
+    mime?: string;
+  }>(null);
 
   const [trip, setTrip] = useState<Trip | null>(null);
   const [media, setMedia] = useState<Media[]>([]);
@@ -94,12 +110,10 @@ function TripDetail({ id }: { id: string }) {
   const [uploadMsg, setUploadMsg] = useState("");
   const [expMsg, setExpMsg] = useState("");
   const [notFound, setNotFound] = useState(false);
-
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
-  const isOwner =
-    !!(sess?.user?.email && trip?.owner_user_id) &&
-    sess.user.email.toLowerCase() === (trip!.owner_user_id as string).toLowerCase();
+  // ...
+}
 
   useEffect(() => {
     let alive = true;
@@ -156,10 +170,7 @@ function TripDetail({ id }: { id: string }) {
     setMedia((m.items || []) as Media[]);
   }
 
-  /* ======= Képek / Dokumentumok leválogatás (category elsőbbség) ======= */
-const looksLikeImageByName = (name?: string) =>
-  !!(name && /\.(jpe?g|png|webp|gif)$/i.test(name));
-
+ /* ======= Képek / Dokumentumok leválogatás (category elsőbbség) ======= */
 const isImageLike = (m: any) =>
   (m.category === "image") ||
   ((m.category == null || m.category === "") &&
@@ -175,6 +186,7 @@ const documents = useMemo(
   [media]
 );
 /* ======= /Képek / Dokumentumok leválogatás ======= */
+
 
   // --- Upload (max 3 kép a „Fotók”-hoz) -------------------------------------
   const imageCount = images.length;
