@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 
+const { data: sess } = useSession();
+
 // segédfüggvények
 const looksLikeImageByName = (name?: string) =>
   !!(name && /\.(jpe?g|png|webp|gif)$/i.test(name));
