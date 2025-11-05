@@ -3,6 +3,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { useSession } from "next-auth/react";
+import TripDocuments_FORCE from "@/components/TripDocuments_FORCE";
+
+// segédfüggvények
+const looksLikeImageByName = (name?: string) =>
+  !!(name && /\.(jpe?g|png|webp|gif)$/i.test(name));
+
+const isImageByMeta = (mime?: string, title?: string) =>
+  (mime || "").toLowerCase().startsWith("image/") || looksLikeImageByName(title);
+
+// modál állapot a nagy előnézethez
+const [docPreview, setDocPreview] = useState<null | {
+  driveId: string;
+  title?: string;
+  mime?: string;
+}>(null);
+
 
 type Trip = {
   id: string;
@@ -520,98 +536,188 @@ const documents = useMemo(
         )}
       </section>
 
-      {/* DOKUMENTUMOK */}
-      <section style={{ border: "1px solid #eee", borderRadius: 8, padding: 12, display: "grid", gap: 12 }}>
-        <h2 style={{ margin: 0 }}>Dokumentumok</h2>
+      {/* DOKUMENTUMOK – kártyanézet + modál előnézet */}
+<section style={{ border: "1px solid #eee", borderRadius: 8, padding: 12, display: "grid", gap: 12 }}>
+  <h2 style={{ margin: 0 }}>Dokumentumok</h2>
 
-        {isOwner ? (
-          <>
-            <form onSubmit={onUploadDocs} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <input
-                type="file"
-                name="file"
-                accept=".pdf,.doc,.docx,.xls,.xlsx,.ods,.txt,image/*"
-                multiple
-                required
-              />
-              <input type="text" name="title" placeholder="Cím (opcionális)" />
-              <select name="media_visibility" defaultValue="private" title="Láthatóság">
-                <option value="private">Privát</option>
-                <option value="public">Publikus</option>
-              </select>
-              <input type="hidden" name="type" value="file" />
-              <input type="hidden" name="category" value="document" />
-              <button style={{ padding: 8, border: "1px solid #ddd", borderRadius: 6 }}>
-                Feltöltés
-              </button>
-            </form>
-            <p style={{ margin: 0 }}>{uploadMsg}</p>
-          </>
-        ) : (
-          <em>Csak a tulajdonos tölthet fel dokumentumokat ehhez az úthoz.</em>
-        )}
+  {isOwner ? (
+    <>
+      <form onSubmit={onUploadDocs} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <input
+          type="file"
+          name="file"
+          accept=".pdf,.doc,.docx,.xls,.xlsx,.ods,.txt,image/*"
+          multiple
+          required
+        />
+        <input type="text" name="title" placeholder="Cím (opcionális)" />
+        <select name="media_visibility" defaultValue="private" title="Láthatóság">
+          <option value="private">Privát</option>
+          <option value="public">Publikus</option>
+        </select>
+        <input type="hidden" name="type" value="file" />
+        <input type="hidden" name="category" value="document" />
+        <button style={{ padding: 8, border: "1px solid #ddd", borderRadius: 6 }}>
+          Feltöltés
+        </button>
+      </form>
+      <p style={{ margin: 0 }}>{uploadMsg}</p>
+    </>
+  ) : (
+    <em>Csak a tulajdonos tölthet fel dokumentumokat ehhez az úthoz.</em>
+  )}
 
-        {documents.length === 0 ? (
-          <em style={{ color: "#666" }}>Nincs dokumentum.</em>
-        ) : (
-          <ul style={{ display: "grid", gap: 8, margin: 0, padding: 0, listStyle: "none" }}>
-            {documents.map((m) => {
-              const icon = fileIcon(m.title, m.mimeType);
-              const canDelete =
-                (!!m.uploader_user_id &&
-                  !!sess?.user?.email &&
-                  m.uploader_user_id.toLowerCase() === sess.user.email.toLowerCase()) ||
-                isOwner;
-              return (
-                <li
-                  key={m.id}
-                  style={{
-                    border: "1px solid #eee",
-                    borderRadius: 8,
-                    padding: "8px 12px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 12,
-                    background: "#fff",
+  {documents.length === 0 ? (
+    <em style={{ color: "#666" }}>Nincs dokumentum.</em>
+  ) : (
+    <div style={{
+      display: "grid",
+      gap: 12,
+      gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))"
+    }}>
+      {documents.map((m) => {
+        const mime = (m.mimeType || "").toLowerCase();
+        const imgLike = isImageByMeta(m.mimeType, m.title);
+        // kártya előnézeti kép:
+        // - képnél saját thumb proxy
+        // - nem képnél: Drive thumbnailLink (ha van)
+        const thumb = imgLike
+          ? `/api/media/thumb/${m.drive_file_id}?w=1000`
+          : (m as any).thumbnailLink
+              ? (m as any).thumbnailLink.replace(/=s\d+$/i, "=s1000")
+              : "";
+
+        const canDelete =
+          ((m as any).uploader_user_id &&
+            (sess?.user?.email || "").toLowerCase() === String((m as any).uploader_user_id).toLowerCase()) ||
+          isOwner;
+
+        return (
+          <article
+            key={m.id}
+            onClick={() => setDocPreview({ driveId: m.drive_file_id, title: m.title, mime: m.mimeType })}
+            style={{
+              cursor: "pointer",
+              border: "1px solid #eee",
+              borderRadius: 12,
+              overflow: "hidden",
+              background: m.media_visibility === "public" ? "#fff" : "#fafafa",
+              boxShadow: "0 1px 3px rgba(0,0,0,.06)"
+            }}
+            title={m.title}
+          >
+            <div style={{ position: "relative", background: "#f5f5f5", aspectRatio: "4/3" }}>
+              {imgLike ? (
+                <img
+                  src={thumb}
+                  alt={m.title || "Kép"}
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                  onError={(ev) => {
+                    const img = ev.currentTarget as HTMLImageElement;
+                    if (!(img as any).dataset.fallback) {
+                      (img as any).dataset.fallback = "1";
+                      img.src = `https://drive.google.com/uc?export=view&id=${m.drive_file_id}`;
+                    }
                   }}
-                  title={m.title}
+                />
+              ) : thumb ? (
+                <img
+                  src={thumb}
+                  alt={m.title || "Dokumentum előnézet"}
+                  style={{ width: "100%", height: "100%", objectFit: "contain", background: "#fff" }}
+                />
+              ) : (
+                <div style={{
+                  width: "100%", height: "100%",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 40
+                }}>📄</div>
+              )}
+
+              {m.media_visibility === "private" && (
+                <span style={{
+                  position: "absolute", top: 8, right: 8,
+                  background: "rgba(0,0,0,.6)", color: "#fff",
+                  fontSize: 12, padding: "2px 8px", borderRadius: 999
+                }}>Privát</span>
+              )}
+            </div>
+
+            <div style={{ padding: 12, display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600, fontSize: 13 }}>
+                {m.title || m.mimeType || "dokumentum"}
+              </div>
+              {canDelete && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onDeleteMedia(m.id); }}
+                  style={{
+                    padding: "4px 8px",
+                    border: "1px solid #e33",
+                    borderRadius: 6,
+                    background: "#fff",
+                    color: "#e33",
+                    cursor: "pointer",
+                    fontSize: 12
+                  }}
                 >
-                  <a
-                    href={`/api/media/file/${m.drive_file_id}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: "inherit" }}
-                  >
-                    <span style={{ fontSize: 22 }}>{icon}</span>
-                    <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 420 }}>
-                      {m.title || m.mimeType || "dokumentum"}
-                    </span>
-                    {m.media_visibility === "private" && (
-                      <span style={{ fontSize: 11, color: "#999", marginLeft: 8 }}>(privát)</span>
-                    )}
-                  </a>
-                  {canDelete && (
-                    <button
-                      onClick={() => onDeleteMedia(m.id)}
-                      style={{
-                        padding: "6px 10px",
-                        border: "1px solid #e33",
-                        borderRadius: 6,
-                        background: "#fff",
-                        color: "#e33",
-                        cursor: "pointer",
-                      }}
-                    >
-                      Törlés
-                    </button>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
+                  Törlés
+                </button>
+              )}
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  )}
+
+  {/* MODÁL – nagy előnézet (NEM letölt) */}
+  {docPreview && (
+    <div
+      onClick={() => setDocPreview(null)}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,.7)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 16, zIndex: 1000
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          position: "relative",
+          width: "min(1100px, 96vw)", height: "min(85vh, 900px)",
+          background: "#fff", borderRadius: 12, overflow: "hidden",
+          boxShadow: "0 10px 30px rgba(0,0,0,.35)"
+        }}
+      >
+        <button
+          onClick={() => setDocPreview(null)}
+          style={{
+            position: "absolute", top: 8, right: 8, zIndex: 2,
+            background: "rgba(0,0,0,.6)", color: "#fff",
+            borderRadius: 999, padding: "6px 10px", border: 0, cursor: "pointer"
+          }}
+        >
+          Bezárás ✕
+        </button>
+
+        {isImageByMeta(docPreview.mime, docPreview.title) ? (
+          <img
+            src={`/api/media/file/${docPreview.driveId}`}
+            alt={docPreview.title || "Kép"}
+            style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000" }}
+          />
+        ) : (
+          <iframe
+            src={`https://drive.google.com/file/d/${docPreview.driveId}/preview`}
+            title={docPreview.title || "Előnézet"}
+            allow="autoplay"
+            style={{ width: "100%", height: "100%", border: 0, background: "#fff" }}
+          />
         )}
-      </section>
+      </div>
+    </div>
+  )}
+</section>
 
       {/* KÖLTÉSEK */}
       <section style={{ border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
