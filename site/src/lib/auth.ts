@@ -86,7 +86,8 @@ async function ensureUserAndFolder(
  * NextAuth v4 kompatibilis beállítások, App Routerrel használva.
  */
 export const authOptions: NextAuthOptions = {
-  secret: process.env.NEXTAUTH_SECRET, // fontos v4-ben is
+  trustHost: true,                         // ⬅️ Vercel/Proxy mögötti host elfogadása
+  secret: process.env.NEXTAUTH_SECRET,     // fontos v4-ben is
   session: { strategy: "jwt" },
   providers: [
     GoogleProvider({
