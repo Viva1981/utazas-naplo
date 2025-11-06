@@ -3,14 +3,27 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getTripById, getDocumentsByTripId } from "@/lib/data";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
+
+/**
+ * GET /api/trips/[id]/documents
+ * - Next 15/16: ctx.params Promise lehet → await kell
+ * - Átmeneti kompat: elfogadjuk az { id } és { tripId } nevű slugot is
+ */
 export async function GET(
   _req: NextRequest,
-  context: { params: Promise<{ tripId: string }> }
+  ctx: { params: Promise<{ id?: string; tripId?: string }> }
 ) {
-  // Next 16: params Promise – ki kell várni
-  const { tripId } = await context.params;
+  const p = await ctx.params;
+  const tripId = (p.id ?? p.tripId ?? "").trim();
 
-  // Szerveroldali session (nem kötelező, de ha van, owner mindent lát)
+  if (!tripId) {
+    return NextResponse.json({ error: "Missing id" }, { status: 400 });
+  }
+
+  // Szerveroldali session (ha van, owner mindent lát)
   let session: any = null;
   try {
     session = await getServerSession(authOptions);
@@ -25,10 +38,10 @@ export async function GET(
   const ownerEmail = (trip.owner_user_id as string | undefined)?.toLowerCase() ?? null;
   const isOwner = !!userEmail && !!ownerEmail && userEmail === ownerEmail;
 
-  const allDocs = await getDocumentsByTripId(tripId);
+  const allDocs = (await getDocumentsByTripId(tripId)) ?? [];
   const visibleDocs = isOwner
     ? allDocs
-    : allDocs.filter((d: any) => d.visibility === "public");
+    : allDocs.filter((d: any) => (d.visibility ?? d.media_visibility ?? "public") === "public");
 
   return NextResponse.json({
     ok: true,
@@ -38,8 +51,8 @@ export async function GET(
       owner_user_id: d.owner_user_id,
       filename: d.filename,
       url: d.url,
-      mime: d.mime,
-      visibility: d.visibility as "public" | "private",
+      mime: d.mime || d.mimeType || "",
+      visibility: (d.visibility ?? d.media_visibility ?? "public") as "public" | "private",
       created_at: d.created_at,
     })),
   });
