@@ -6,26 +6,19 @@ import { useSession } from "next-auth/react";
 export default function SiteHeader() {
   const { data: session, status } = useSession();
 
-  // Nem hívunk preventDefault-ot. Ha a JS-es import/signIn mégis elhasal,
-  // a <a href="..."> akkor is navigál az auth endpointra.
+  // Csak “rásegítünk” JS-ből; ha nem sikerül, a href így is működik.
   async function trySignIn() {
     try {
       const mod = await import("next-auth/react");
-      // ez redirectes navigációt indít; ha nem futna le,
-      // a href úgyis elintézi
       await mod.signIn("google", { callbackUrl: "/" });
-    } catch {
-      // no-op
-    }
+    } catch {}
   }
 
   async function trySignOut() {
     try {
       const mod = await import("next-auth/react");
       await mod.signOut({ callbackUrl: "/" });
-    } catch {
-      // no-op
-    }
+    } catch {}
   }
 
   return (
