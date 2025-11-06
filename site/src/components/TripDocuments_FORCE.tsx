@@ -25,14 +25,13 @@ type Props = {
 const looksLikeImageByName = (name?: string) =>
   !!(name && /\.(jpe?g|png|webp|gif)$/i.test(name));
 
-export default function TripDocuments({
+export default function TripDocuments_FORCE({
   documents,
   isOwner,
   onUploadDocs,
   onDeleteMedia,
   uploadMsg,
 }: Props) {
-  // Csak látható, nem archivált doksik (public nézőnek: csak public)
   const visibleDocs = React.useMemo(
     () =>
       isOwner
@@ -41,16 +40,17 @@ export default function TripDocuments({
     [documents, isOwner]
   );
 
-  // Modál állapot
   const [open, setOpen] = React.useState(false);
   const [active, setActive] = React.useState<Media | null>(null);
   const onOpen = (m: Media) => { setActive(m); setOpen(true); };
   const onClose = () => { setOpen(false); setTimeout(() => setActive(null), 180); };
 
   return (
-    <section className="max-w-5xl mx-auto mt-10 p-6 bg-white/80 backdrop-blur-md rounded-xl shadow-md">
+    <section className="max-w-5xl mx-auto mt-10 p-6 rounded-xl shadow-md" style={{background:"#fff8ee"}}>
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-2xl font-semibold text-gray-800">Dokumentumok</h2>
+        <h2 className="text-2xl font-semibold text-gray-800">
+          Dokumentumok — 💡FORCE (kártyanézet)
+        </h2>
         {isOwner ? (
           <span className="text-sm text-gray-500">Privát dokumentumokat csak te látod 🔒</span>
         ) : (
@@ -58,18 +58,12 @@ export default function TripDocuments({
         )}
       </div>
 
-      {/* ⬅ Fontos: így még a JPG is DOKUMENTUM lesz ebben a szekcióban */}
       {isOwner && (
         <form onSubmit={onUploadDocs} className="flex flex-wrap gap-4 items-center border p-4 rounded-lg bg-gray-50 mb-6">
+          {/* ETTŐL A DOKSIBAN MARAD A KÉP IS */}
           <input type="hidden" name="category" value="document" />
-          <input
-            type="file"
-            name="file"
-            accept=".pdf,.doc,.docx,.xls,.xlsx,.ods,.txt,image/*"
-            multiple
-            required
-            className="text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-amber-100 file:text-amber-700 hover:file:bg-amber-200"
-          />
+          <input type="file" name="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ods,.txt,image/*" multiple required
+                 className="text-sm text-gray-600 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:bg-amber-100 file:text-amber-700 hover:file:bg-amber-200" />
           <input type="text" name="title" placeholder="Cím (opcionális)" className="border rounded-md px-3 py-2 text-sm" />
           <select name="media_visibility" defaultValue="private" className="border rounded-md px-3 py-2 text-sm">
             <option value="private">Privát</option>
@@ -90,10 +84,9 @@ export default function TripDocuments({
             const mime = (m.mimeType || "").toLowerCase();
             const isImage = mime.startsWith("image/") || looksLikeImageByName(m.title);
             const isPdf = mime === "application/pdf";
-            const thumb =
-              isImage
-                ? `/api/media/thumb/${m.drive_file_id}?w=1000`
-                : (m.thumbnailLink ? m.thumbnailLink.replace(/=s\\d+$/i, "=s1000") : undefined);
+            const thumb = isImage
+              ? `/api/media/thumb/${m.drive_file_id}?w=1000`
+              : (m.thumbnailLink ? m.thumbnailLink.replace(/=s\\d+$/i, "=s1000") : undefined);
 
             return (
               <article
@@ -130,7 +123,6 @@ export default function TripDocuments({
 
                 <div className="p-4">
                   <h3 className="text-sm font-semibold truncate">{m.title || m.mimeType || "Dokumentum"}</h3>
-                  {/* Nincs letöltés-link itt; katt a kártyára → modál */}
                   {isOwner && (
                     <button
                       onClick={(e) => { e.stopPropagation(); onDeleteMedia(m.id); }}
@@ -165,7 +157,6 @@ function PreviewBody({ media }: { media: Media }) {
   if (isImage) {
     return <img src={`/api/media/file/${media.drive_file_id}`} alt={media.title || "Kép"} className="w-full h-full object-contain bg-black" />;
   }
-  // Drive beépített előnézet minden másra (PDF, Office, stb.)
   const drivePreview = `https://drive.google.com/file/d/${media.drive_file_id}/preview`;
   return <iframe src={drivePreview} title={media.title || "Dokumentum"} className="w-full h-full border-0 bg-white" allow="autoplay" />;
 }
