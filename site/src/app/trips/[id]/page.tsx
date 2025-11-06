@@ -75,9 +75,6 @@ export default function TripPage() {
       const t: Trip = await r.json();
       setTrip(t);
 
-      // Hero Unsplash
-      // (később díszítjük – most kihagyjuk az API hívást)
-
       // Media lista
       const r2 = await fetch(`/api/media/list?trip_id=${encodeURIComponent(String(id))}`, {
         cache: "no-store",
@@ -89,8 +86,8 @@ export default function TripPage() {
 
         const imgs = list.filter(
           (m) =>
-            (m.category === "image") ||
-            ((m.mimeType || "").toLowerCase().startsWith("image/"))
+            m.category === "image" ||
+            (m.mimeType || "").toLowerCase().startsWith("image/")
         );
         setImages(imgs);
 
@@ -149,9 +146,12 @@ export default function TripPage() {
   async function onUploadDocs(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setUploadMsg("");
+    if (!trip) {
+      setUploadMsg("Hiba: az utazás még nem töltődött be.");
+      return;
+    }
     const fd = new FormData(e.currentTarget);
 
-    // /api/media/upload → több file felvétele
     const r = await fetch(`/api/media/upload?trip_id=${encodeURIComponent(trip.id)}`, {
       method: "POST",
       body: fd,
@@ -172,8 +172,8 @@ export default function TripPage() {
       setMedia(list);
       const imgs = list.filter(
         (m) =>
-          (m.category === "image") ||
-          ((m.mimeType || "").toLowerCase().startsWith("image/"))
+          m.category === "image" ||
+          (m.mimeType || "").toLowerCase().startsWith("image/")
       );
       setImages(imgs);
       const docs = list.filter(
@@ -199,6 +199,10 @@ export default function TripPage() {
   async function onExpense(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setExpenseMsg("");
+    if (!trip) {
+      setExpenseMsg("Hiba: az utazás még nem töltődött be.");
+      return;
+    }
     const fd = new FormData(e.currentTarget);
 
     const payload = {
@@ -279,7 +283,7 @@ export default function TripPage() {
         </div>
       </section>
 
-      {/* Képgaléria (egyszerű) */}
+      {/* Képek */}
       {images.length > 0 && (
         <section className="max-w-5xl mx-auto mt-6">
           <h2 className="text-xl font-semibold text-gray-800 mb-3">Képek</h2>
@@ -303,7 +307,7 @@ export default function TripPage() {
         </section>
       )}
 
-      {/* 📂 Dokumentumok – külön komponens */}
+      {/* 📂 Dokumentumok */}
       <TripDocuments
         documents={documents}
         isOwner={isOwner}
@@ -312,7 +316,7 @@ export default function TripPage() {
         uploadMsg={uploadMsg}
       />
 
-      {/* 💳 Költések – (alap, majd széppé tesszük külön) */}
+      {/* 💳 Költések */}
       <section className="max-w-5xl mx-auto mt-10 p-6 bg-white/80 backdrop-blur-md rounded-xl shadow-md">
         <h2 className="text-2xl font-semibold text-gray-800 mb-4">Költések</h2>
 
