@@ -30,6 +30,12 @@ function niceDate(d?: string) {
   return `${Y}.${M}.${D}`;
 }
 
+function toArrayOrItems(json: any): any[] {
+  if (Array.isArray(json)) return json;
+  if (json && Array.isArray(json.items)) return json.items;
+  return [];
+}
+
 /* ================= Types ================= */
 
 type Trip = {
@@ -40,6 +46,7 @@ type Trip = {
   destination?: string;
   owner_user_id?: string;
   visibility?: "public" | "private";
+  drive_folder_link?: string;
 };
 
 type Media = {
@@ -125,28 +132,25 @@ function TripDetail({ id }: { id: string }) {
       setTrip(t);
 
       // MEDIA – a szerver szűr láthatóság szerint
-      const m = await fetch(`/api/media/list?trip_id=${id}`, { cache: "no-store" })
-        .then((x) => x.json())
-        .catch(() => ({ items: [] }));
+      const mRes = await fetch(`/api/media/list?trip_id=${id}`, { cache: "no-store" });
+      const mJson = mRes.ok ? await mRes.json().catch(() => []) : [];
       if (!alive) return;
-      setMedia((m.items || []) as Media[]);
+      setMedia(toArrayOrItems(mJson) as Media[]);
 
       // EXPENSES
-      const e = await fetch(`/api/expenses/list?trip_id=${id}`, { cache: "no-store" })
-        .then((x) => x.json())
-        .catch(() => ({ items: [] }));
+      const eRes = await fetch(`/api/expenses/list?trip_id=${id}`, { cache: "no-store" });
+      const eJson = eRes.ok ? await eRes.json().catch(() => []) : [];
       if (!alive) return;
-      setExpenses(e.items || []);
+      setExpenses(toArrayOrItems(eJson) as Expense[]);
     })();
 
     return () => { alive = false; };
   }, [id]);
 
   async function refreshMedia() {
-    const m = await fetch(`/api/media/list?trip_id=${id}`, { cache: "no-store" })
-      .then((x) => x.json())
-      .catch(() => ({ items: [] }));
-    setMedia((m.items || []) as Media[]);
+    const r = await fetch(`/api/media/list?trip_id=${id}`, { cache: "no-store" });
+    const j = r.ok ? await r.json().catch(() => []) : [];
+    setMedia(toArrayOrItems(j) as Media[]);
   }
 
   /* ======= Képek / Dokumentumok leválogatás (category elsőbbség) ======= */
@@ -207,7 +211,7 @@ function TripDetail({ id }: { id: string }) {
     const fd = new FormData(form);
     fd.append("tripId", String(id));
     fd.append("type", "file");
-    fd.append("category", "document"); // ← ettől dokumentum marad a kép is
+    fd.append("category", "document");
     if (!fd.get("media_visibility")) fd.set("media_visibility", "private");
 
     const r = await fetch("/api/drive/upload", { method: "POST", body: fd, credentials: "include" });
@@ -253,7 +257,7 @@ function TripDetail({ id }: { id: string }) {
     if (r.ok) {
       setExpMsg("Siker ✅");
       const e2 = await fetch(`/api/expenses/list?trip_id=${id}`, { cache: "no-store" }).then((x) => x.json());
-      setExpenses(e2.items || []);
+      setExpenses(toArrayOrItems(e2) as Expense[]);
       (form as HTMLFormElement).reset();
     } else {
       setExpMsg("Hiba ❌ " + (j?.error ? String(j.error) : "")); 
@@ -312,8 +316,8 @@ function TripDetail({ id }: { id: string }) {
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
           <h2 style={{ margin: 0 }}>Fotók</h2>
           {isOwner && (
-            <small style={{ color: remainingImageSlots === 0 ? "#d33" : "#666" }}>
-              {remainingImageSlots === 0 ? "Elérted a 3 képes limitet" : `Még ${remainingImageSlots} kép tölthető fel`}
+            <small style={{ color: images.length >= 3 ? "#d33" : "#666" }}>
+              {images.length >= 3 ? "Elérted a 3 képes limitet" : `Még ${Math.max(0, 3 - images.length)} kép tölthető fel`}
             </small>
           )}
         </div>
@@ -321,14 +325,14 @@ function TripDetail({ id }: { id: string }) {
         {isOwner && (
           <>
             <form onSubmit={onUploadImages} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <input type="file" name="file" accept="image/*" multiple required disabled={remainingImageSlots === 0} />
+              <input type="file" name="file" accept="image/*" multiple required disabled={images.length >= 3} />
               <input type="text" name="title" placeholder="Cím (opcionális)" />
               <input type="hidden" name="type" value="file" />
               <input type="hidden" name="category" value="image" />
               <input type="hidden" name="media_visibility" value="public" />
               <button
-                disabled={remainingImageSlots === 0}
-                style={{ padding: 8, border: "1px solid #ddd", borderRadius: 6, opacity: remainingImageSlots === 0 ? 0.6 : 1, cursor: remainingImageSlots === 0 ? "not-allowed" : "pointer" }}
+                disabled={images.length >= 3}
+                style={{ padding: 8, border: "1px solid #ddd", borderRadius: 6, opacity: images.length >= 3 ? 0.6 : 1, cursor: images.length >= 3 ? "not-allowed" : "pointer" }}
               >
                 Feltöltés
               </button>
@@ -342,16 +346,20 @@ function TripDetail({ id }: { id: string }) {
         ) : (
           <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))" }}>
             {images.map((m, i) => {
-              const thumb = `/api/media/thumb/${m.drive_file_id}?w=1600`;
+              // 🔴 FONTOS: THUMB/FILE már MEDIA ID-val megy, nem drive_file_id-val
+              const thumb = `/api/media/thumb/${m.id}?w=1600`;
+              const full = `/api/media/file/${m.id}`;
               const canDelete =
                 (!!m.uploader_user_id && !!sess?.user?.email && m.uploader_user_id.toLowerCase() === sess.user.email.toLowerCase()) ||
                 isOwner;
               return (
                 <div key={m.id} style={{ display: "grid", gap: 6 }}>
-                  <button
-                    onClick={() => setLightboxIndex(i)}
+                  <a
+                    href={full}
+                    target="_blank"
+                    rel="noreferrer"
                     title={m.title || "Kép megnyitása"}
-                    style={{ border: "none", padding: 0, background: "transparent", cursor: "zoom-in", display: "block", width: "100%" }}
+                    style={{ display: "block", width: "100%" }}
                   >
                     <div style={{ position: "relative", width: "100%", paddingTop: "75%", background: "#f7f7f7", borderRadius: 8, overflow: "hidden" }}>
                       <img
@@ -363,12 +371,13 @@ function TripDetail({ id }: { id: string }) {
                           const img = ev.currentTarget as HTMLImageElement;
                           if (!img.dataset.fallback) {
                             img.dataset.fallback = "1";
+                            // végső fallback: direkt Drive nézet-fájl
                             img.src = `https://drive.google.com/uc?export=view&id=${m.drive_file_id}`;
                           }
                         }}
                       />
                     </div>
-                  </button>
+                  </a>
 
                   {canDelete && (
                     <button
@@ -384,12 +393,12 @@ function TripDetail({ id }: { id: string }) {
           </div>
         )}
 
-        {/* Lightbox */}
+        {/* Lightbox – itt is MEDIA ID-ra váltunk (teljes képet kérünk) */}
         {lightboxIndex !== null && images[lightboxIndex] && (
           <dialog open style={{ border: "none", padding: 0, background: "transparent" }}>
             <div onClick={() => setLightboxIndex(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.85)", display: "grid", placeItems: "center", cursor: "zoom-out" }}>
               <img
-                src={`/api/media/thumb/${images[lightboxIndex].drive_file_id}?w=2400`}
+                src={`/api/media/file/${images[lightboxIndex].id}`}
                 alt={images[lightboxIndex].title || ""}
                 style={{ maxWidth: "92vw", maxHeight: "90vh", objectFit: "contain" }}
                 onError={(ev) => {
@@ -434,8 +443,9 @@ function TripDetail({ id }: { id: string }) {
           <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>
             {documents.map((m) => {
               const imgLike = isImageByMeta(m.mimeType, m.title);
+              // 🔴 Ha képszerű, akkor is a SAJÁT THUMB API-t használjuk MEDIA ID-val
               const thumb = imgLike
-                ? `/api/media/thumb/${m.drive_file_id}?w=1000`
+                ? `/api/media/thumb/${m.id}?w=1000`
                 : (m.thumbnailLink ? m.thumbnailLink.replace(/=s\d+$/i, "=s1000") : "");
 
               const canDelete =
