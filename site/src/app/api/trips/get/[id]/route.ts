@@ -9,72 +9,48 @@ const TRIPS_SHEET = "Trips!A2:I"; // id | title | start | end | destination | ow
 
 export async function GET(
   _req: Request,
-  ctx: { params: Promise<{ id: string }> } // Next params Promise
+  ctx: { params: Promise<{ id: string }> } // Next params Promise (Next 15/16 app router)
 ) {
   const { id } = await ctx.params;
   const wanted = (id || "").trim();
-  const norm = (s?: string) => (s ?? "").trim().toLowerCase();
+  if (!wanted) {
+    return NextResponse.json({ error: "Missing id" }, { status: 400 });
+  }
+
+  // csak bejelentkezve engedjük (mert Sheets/Drive token kell)
+  const session = await getServerSession(authOptions);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    // Beolvassuk a Trips táblát
     const { values } = await sheetsGet(TRIPS_SHEET);
-    const rows: string[][] = values ?? [];
-
-    const row = rows.find((r) => norm(r?.[0]) === norm(wanted));
-    if (!row) {
+    const rows = values ?? [];
+    const idx = rows.findIndex((r) => (r?.[0] || "").trim() === wanted);
+    if (idx < 0) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
+    const row = rows[idx];
 
-    const [
-      tripId,
-      title,
-      start_date,
-      end_date,
-      destination,
-      owner_user_id,
-      drive_folder_id,
-      drive_folder_link,
-      visibility,
-    ] = row;
+    // A..I: id | title | start | end | destination | owner | folderId | folderLink | visibility
+    const trip = {
+      id: String(row[0] || ""),
+      title: String(row[1] || ""),
+      start_date: String(row[2] || ""),
+      end_date: String(row[3] || ""),
+      destination: String(row[4] || ""),
+      owner_user_id: String(row[5] || ""),
+      drive_folder_id: String(row[6] || ""),
+      drive_folder_link: String(row[7] || ""),
+      visibility: (String(row[8] || "") as "public" | "private") || "public",
+    };
 
-    const tripVisibility = (visibility || "private").toLowerCase() as
-      | "public"
-      | "private";
-
-    // Jogosultság: ha privát, csak a tulaj láthatja
-    let isOwner = false;
-    if (tripVisibility !== "public") {
-      const session = await getServerSession(authOptions);
-      const me =
-        (((session as any)?.userId as string | undefined) ||
-          ((session?.user as any)?.email as string | undefined) ||
-          ""
-        ).toLowerCase();
-
-      isOwner = !!me && (owner_user_id || "").toLowerCase() === me;
-
-      if (!isOwner) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-      }
-    }
-
-    // Válasz: (ha szeretnéd, itt elrejthetjük a drive_folder_* mezőket publikus nézetben)
-    return NextResponse.json({
-      id: tripId,
-      title,
-      start_date,
-      end_date,
-      destination,
-      owner_user_id,
-      drive_folder_id,
-      drive_folder_link,
-      visibility: tripVisibility,
-    });
-  } catch (err: any) {
-    console.error("Trip get error:", err);
-    return NextResponse.json(
-      { error: "Internal error", detail: String(err) },
-      { status: 500 }
-    );
+    // A page.tsx ezt a Trip objektumot várja KÖZVETLENÜL (nem {trip: {...}})
+    return NextResponse.json(trip, { status: 200 });
+  } catch (e: any) {
+    console.error("GET /api/trips/get/[id] error:", e?.message || e);
+    return NextResponse.json({ error: "Internal error" }, { status: 500 });
   }
 }
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
