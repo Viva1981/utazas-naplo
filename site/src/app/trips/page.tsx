@@ -1,60 +1,76 @@
 "use client";
-import { useEffect, useState } from "react";
-import Link from "next/link";
 
-type Trip = { id: string; title: string; start_date?: string; end_date?: string; destination?: string };
+import { useEffect, useState } from "react";
+
+type Trip = {
+  id: string;
+  title: string;
+  destination?: string;
+  start_date?: string;
+  end_date?: string;
+  visibility?: "public" | "private";
+};
 
 export default function TripsPage() {
-  const [items, setItems] = useState<Trip[]>([]);
+  const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
+    let alive = true;
     (async () => {
-      setLoading(true);
-      setErrorMsg(null);
       try {
-        const r = await fetch("/api/trips/list");
-        if (!r.ok) {
-          const txt = await r.text(); // ne json()-t, mert lehet üres
-          setErrorMsg(`Hiba: ${r.status} ${txt || r.statusText}`);
-          setItems([]);
-        } else {
-          const j = await r.json().catch(() => ({ items: [] })); // védőháló
-          setItems(j.items || []);
-        }
-      } catch (e: any) {
-        setErrorMsg(`Hálózati hiba: ${String(e)}`);
-        setItems([]);
+        const r = await fetch("/api/trips", { cache: "no-store" });
+        const list: Trip[] = r.ok ? await r.json().catch(() => []) : [];
+        if (alive) setTrips(list);
       } finally {
-        setLoading(false);
+        if (alive) setLoading(false);
       }
     })();
+    return () => { alive = false; };
   }, []);
 
   return (
-    <main style={{ padding: 24 }}>
-      <h1>Utak</h1>
-      <div style={{ margin: "12px 0" }}>
-        <Link href="/trips/new">+ Új út</Link>
+    <main className="max-w-5xl mx-auto px-4 py-4 md:py-8">
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-xl md:text-2xl font-semibold">Utak</h1>
+        <a
+          href="/trips/new"
+          className="border rounded-lg px-3 py-2 text-sm hover:bg-gray-50"
+        >
+          ➕ Új út
+        </a>
       </div>
 
-      {loading && <p>Betöltés…</p>}
-      {errorMsg && <p style={{ color: "crimson" }}>{errorMsg}</p>}
-
-      {!loading && !errorMsg && (
-        <ul style={{ display: "grid", gap: 12 }}>
-          {items.map((t) => (
-            <li key={t.id} style={{ border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
-              <div style={{ fontWeight: 600 }}>{t.title}</div>
-              <div style={{ fontSize: 12, color: "#666" }}>
-                {t.destination} • {t.start_date} → {t.end_date}
+      {loading ? (
+        <p>Betöltés…</p>
+      ) : trips.length === 0 ? (
+        <p>Még nincs felvett út. Kezdd az <a className="underline" href="/trips/new">új úttal</a>.</p>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
+          {trips.map((t) => (
+            <a
+              key={t.id}
+              href={`/trips/${encodeURIComponent(t.id)}`}
+              className="
+                group border rounded-2xl p-4 bg-white/80 backdrop-blur-sm
+                hover:bg-white shadow-sm hover:shadow-md transition
+              "
+            >
+              <div className="flex items-start justify-between">
+                <h2 className="font-semibold">{t.title}</h2>
+                <span className="text-xs text-gray-600">
+                  {t.visibility === "private" ? "🔒" : "🌍"}
+                </span>
               </div>
-              <div><Link href={`/trips/${t.id}`}>Részletek</Link></div>
-            </li>
+              <p className="text-sm text-gray-700 mt-1">
+                {t.destination || "—"}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                {(t.start_date || "—")} → {(t.end_date || "—")}
+              </p>
+            </a>
           ))}
-          {items.length === 0 && <p>Még nincs felvett út.</p>}
-        </ul>
+        </div>
       )}
     </main>
   );
