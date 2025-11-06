@@ -6,42 +6,25 @@ import { useSession } from "next-auth/react";
 export default function SiteHeader() {
   const { data: session, status } = useSession();
 
-  function handleSignIn(e: React.MouseEvent<HTMLButtonElement>) {
-    e.preventDefault();
-
-    // 1) programozott login
-    void import("next-auth/react")
-      .then(({ signIn }) => signIn("google", { callbackUrl: "/" }))
-      .catch(() => {
-        // 2) biztos fallback: teljes navigáció
-        window.location.href = "/api/auth/signin?callbackUrl=/";
-      });
-
-    // 3) extra biztonsági fallback 800ms után
-    setTimeout(() => {
-      if (!location.pathname.startsWith("/api/auth")) {
-        window.location.href = "/api/auth/signin?callbackUrl=/";
-      }
-    }, 800);
+  async function trySignIn(e: React.MouseEvent<HTMLAnchorElement>) {
+    // ha tudunk, programozottan indítunk; ha nem, a <a> megy tovább
+    try {
+      const mod = await import("next-auth/react");
+      e.preventDefault();
+      await mod.signIn("google", { callbackUrl: "/" });
+    } catch {
+      /* no-op, a link fallback intézi */
+    }
   }
 
-  function handleSignOut(e: React.MouseEvent<HTMLButtonElement>) {
-    e.preventDefault();
-
-    // 1) programozott logout
-    void import("next-auth/react")
-      .then(({ signOut }) => signOut({ callbackUrl: "/" }))
-      .catch(() => {
-        // 2) biztos fallback: teljes navigáció
-        window.location.href = "/api/auth/signout";
-      });
-
-    // 3) extra fallback
-    setTimeout(() => {
-      if (!location.pathname.startsWith("/api/auth")) {
-        window.location.href = "/api/auth/signout";
-      }
-    }, 800);
+  async function trySignOut(e: React.MouseEvent<HTMLAnchorElement>) {
+    try {
+      const mod = await import("next-auth/react");
+      e.preventDefault();
+      await mod.signOut({ callbackUrl: "/" });
+    } catch {
+      /* no-op, a link fallback intézi */
+    }
   }
 
   return (
@@ -57,20 +40,22 @@ export default function SiteHeader() {
           <Link href="/timeline" className="hover:underline">Idővonal</Link>
 
           {status === "authenticated" && session?.user ? (
-            <button
+            <a
+              href="/api/auth/signout?callbackUrl=%2F"
+              onClick={trySignOut}
               className="ml-3 border rounded px-3 py-1"
-              onClick={handleSignOut}
               title={session.user.email || "Kijelentkezés"}
             >
               Kijelentkezés
-            </button>
+            </a>
           ) : (
-            <button
+            <a
+              href="/api/auth/signin/google?callbackUrl=%2F"
+              onClick={trySignIn}
               className="ml-3 border rounded px-3 py-1"
-              onClick={handleSignIn}
             >
               Bejelentkezés
-            </button>
+            </a>
           )}
         </nav>
       </div>

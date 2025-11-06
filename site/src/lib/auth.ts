@@ -86,6 +86,7 @@ async function ensureUserAndFolder(
  * NextAuth v4 kompatibilis beállítások, App Routerrel használva.
  */
 export const authOptions: NextAuthOptions = {
+  debug: true, // segít a hibaok megtalálásában (buildet nem ront)
   secret: process.env.NEXTAUTH_SECRET,
   session: { strategy: "jwt" },
   providers: [
@@ -111,6 +112,18 @@ export const authOptions: NextAuthOptions = {
     }),
   ],
   callbacks: {
+    // Biztos redirect: bármilyen furcsa URL esetén vissza a site fő URL-jére
+    async redirect({ url, baseUrl }) {
+      if (url.startsWith("/")) return `${baseUrl}${url}`;
+      try {
+        const u = new URL(url);
+        if (u.origin === baseUrl) return url;
+      } catch {
+        // ignore
+      }
+      return baseUrl;
+    },
+
     // token gazdagítása, plusz felhasználó + mappa biztosítása
     async jwt({ token, account, profile }) {
       try {
@@ -148,3 +161,4 @@ export const authOptions: NextAuthOptions = {
     },
   },
 };
+
