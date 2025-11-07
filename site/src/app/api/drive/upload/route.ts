@@ -4,14 +4,17 @@ import { authOptions } from "@/lib/auth";
 import { sheetsAppend, sheetsGet } from "@/lib/sheets";
 
 const TRIPS_RANGE = "Trips!A2:I"; // trip lookup
-const PHOTOS_SHEET_A1 = "Photos!A1";
-const DOCS_SHEET_A1   = "Documents!A1";
+const PHOTOS_A1  = "Photos!A1";
+const DOCS_A1    = "Documents!A1";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 
-// Helper: olvasd ki a tripet a Sheets-ből
+// ===== utilok =====
+const nowISO = () => new Date().toISOString();
+const genId  = (p: string) => `${p}_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+
 async function getTripById(tripId: string) {
   const { values } = await sheetsGet(TRIPS_RANGE);
   const rows = values ?? [];
@@ -19,64 +22,94 @@ async function getTripById(tripId: string) {
   if (!r) return null;
   return {
     id: String(r[0] ?? ""),
+    title: String(r[1] ?? ""),
+    owner: String(r[5] ?? "").toLowerCase(),
     drive_folder_id: String(r[6] ?? ""),
-    owner_user_id: String(r[5] ?? ""),
     visibility: (String(r[8] ?? "").trim().toLowerCase() === "public" ? "public" : "private") as "public"|"private",
   };
 }
 
-// Helper: almappa azonosító (Photos/Documents) – ha nincs, létrehozzuk
-async function ensureSubfolder(accessToken: string, parentId: string, name: "Photos" | "Documents") {
-  // Próbáljuk megkeresni
-  const q = encodeURIComponent(`name='${name}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`);
-  const listUrl = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`;
-  const listRes = await fetch(listUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
-  const listJson = listRes.ok ? await listRes.json().catch(() => ({})) : {};
-  const found = Array.isArray(listJson.files) ? listJson.files[0] : null;
-  if (found?.id) return found.id;
+async function googleJsonOrThrow(res: Response, hint: string) {
+  if (res.ok) return res.json();
+  const text = await res.text().catch(() => "");
+  throw new Error(`${hint} :: ${res.status} ${res.statusText} :: ${text}`);
+}
 
-  // Létrehozás
-  const meta = {
-    name,
-    mimeType: "application/vnd.google-apps.folder",
-    parents: [parentId],
-  };
+/**
+ * Photos / Documents almappa biztosítása.
+ * - Megkeresi a foldert a parent alatt; ha nincs, létrehozza.
+ * - Ha valamiért nem sikerül ID-t visszakapni, fallback: parentId-t ad vissza,
+ *   így legalább a Trip mappába megy a feltöltés (nem esik hasra az egész).
+ */
+async function ensureSubfolder(
+  accessToken: string,
+  parentId: string,
+  name: "Photos" | "Documents"
+): Promise<string> {
+  if (!parentId) {
+    // nincs trip mappa: töltsünk a Drive rootba (fájl létrejön, sheet frissül)
+    return "";
+  }
+
+  // 1) keresés
+  const q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`;
+  const listURL = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)`;
+  const listRes = await fetch(listURL, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (listRes.ok) {
+    const data = await listRes.json().catch(() => ({} as any));
+    const found = Array.isArray(data.files) ? data.files[0] : null;
+    if (found?.id) return String(found.id);
+  } else {
+    // nem kritikus – megyünk tovább a létrehozással
+    console.warn("ensureSubfolder list failed:", await listRes.text().catch(()=>""));
+  }
+
+  // 2) létrehozás
   const createRes = await fetch("https://www.googleapis.com/drive/v3/files", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(meta),
+    body: JSON.stringify({
+      name,
+      mimeType: "application/vnd.google-apps.folder",
+      parents: [parentId],
+    }),
   });
-  const createJson = createRes.ok ? await createRes.json().catch(() => ({})) : {};
-  return createJson.id as string;
+
+  if (createRes.ok) {
+    const j = await createRes.json().catch(() => ({} as any));
+    if (j?.id) return String(j.id);
+    console.warn("ensureSubfolder create ok but no id in response:", j);
+    return parentId; // fallback
+  } else {
+    console.warn("ensureSubfolder create failed:", await createRes.text().catch(()=>""));
+    return parentId; // fallback
+  }
 }
 
-// Helper: fájl feltöltése Drive-ra (multipart)
 async function uploadToDriveMultipart(
   accessToken: string,
-  parentId: string,
+  parentId: string, // lehet "" → root
   file: File
-) {
-  const metadata = {
-    name: file.name,
-    parents: [parentId],
-  };
+): Promise<{ id: string; webViewLink?: string; thumbnailLink?: string }> {
+  const metadata: any = { name: file.name };
+  if (parentId) metadata.parents = [parentId];
 
   const boundary = "BOUNDARY-" + Math.random().toString(36).slice(2);
-  const encoder = new TextEncoder();
+  const enc = new TextEncoder();
 
-  const metaPart = encoder.encode(
+  const metaPart = enc.encode(
     `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`
   );
-
-  const fileArrayBuffer = await file.arrayBuffer();
-  const filePartHeader = encoder.encode(
+  const fileBuf = new Uint8Array(await file.arrayBuffer());
+  const filePartHdr = enc.encode(
     `--${boundary}\r\nContent-Type: ${file.type || "application/octet-stream"}\r\n\r\n`
   );
-  const endPart = encoder.encode(`\r\n--${boundary}--`);
-  const body = new Blob([metaPart, filePartHeader, new Uint8Array(fileArrayBuffer), endPart]);
+  const end = enc.encode(`\r\n--${boundary}--`);
+
+  const body = new Blob([metaPart, filePartHdr, fileBuf, end]);
 
   const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink,thumbnailLink", {
     method: "POST",
@@ -89,108 +122,110 @@ async function uploadToDriveMultipart(
 
   if (!res.ok) {
     const txt = await res.text().catch(() => "");
-    throw new Error(`Drive upload error: ${res.status} ${txt}`);
+    throw new Error(`Drive upload error :: ${res.status} ${res.statusText} :: ${txt}`);
   }
-  return res.json() as Promise<{ id: string; webViewLink?: string; thumbnailLink?: string }>;
+  return res.json();
 }
 
-// Helper: mostani idő ISO
-const nowISO = () => new Date().toISOString();
-
-// Helper: ID generálás
-function genId(prefix: string) {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
+// ====== fő handler ======
 export async function POST(req: NextRequest) {
   try {
     const session: any = await getServerSession(authOptions);
     const accessToken: string = session?.accessToken || "";
-    const uploaderEmail: string = (session?.user?.email || "").toLowerCase();
-    if (!accessToken || !uploaderEmail) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const email = (session?.user?.email || "").toLowerCase();
+
+    if (!accessToken || !email) {
+      return NextResponse.json({ error: "Unauthorized (no session / accessToken)" }, { status: 401 });
     }
 
     const form = await req.formData();
-    const tripId = String(form.get("tripId") || "").trim();
-    const category = String(form.get("category") || "").trim().toLowerCase(); // "image" | "document"
-    // opcionális: Photos/Documents explicit jelölés
-    const sheetHint = String(form.get("sheet") || "").trim();
-    const docVisibility = String(form.get("doc_visibility") || "private").toLowerCase(); // only for Documents
-    const title = String(form.get("title") || "");
+    const tripId     = String(form.get("tripId") || "").trim();
+    const category   = String(form.get("category") || "").trim().toLowerCase(); // "image" | "document"
+    const sheetHint  = String(form.get("sheet") || "").trim();                  // "Photos" | "Documents" (nem kötelező)
+    const title      = String(form.get("title") || "");
+    const docVisRaw  = String(form.get("doc_visibility") || "private").toLowerCase();
+    const docVis     = docVisRaw === "public" ? "public" : "private";
 
-    if (!tripId) return NextResponse.json({ error: "Missing tripId" }, { status: 400 });
-    if (!["image", "document"].includes(category)) {
-      return NextResponse.json({ error: "Invalid category" }, { status: 400 });
+    if (!tripId)    return NextResponse.json({ error: "Missing tripId" }, { status: 400 });
+    if (!["image","document"].includes(category)) {
+      return NextResponse.json({ error: `Invalid category '${category}'` }, { status: 400 });
     }
 
-    // Trip mappa
     const trip = await getTripById(tripId);
     if (!trip) return NextResponse.json({ error: "Trip not found" }, { status: 404 });
 
-    // Csak owner tölthessen fel az adott tripbe (ahogy megbeszéltük)
-    if (uploaderEmail !== trip.owner_user_id.toLowerCase()) {
-      return NextResponse.json({ error: "Not allowed" }, { status: 403 });
+    // csak tulaj tölthet
+    if (email !== trip.owner) {
+      return NextResponse.json({ error: "Not allowed (only trip owner can upload)" }, { status: 403 });
     }
 
-    // Almappa: Photos / Documents
-    const subName: "Photos" | "Documents" = category === "image" ? "Photos" : "Documents";
-    const parentId = trip.drive_folder_id;
-    const targetFolderId = parentId ? await ensureSubfolder(accessToken, parentId, subName) : parentId;
-
-    // Fájlok
     const files = form.getAll("file").filter((v) => v instanceof File) as File[];
     if (files.length === 0) {
-      return NextResponse.json({ error: "No files" }, { status: 400 });
+      return NextResponse.json({ error: "No files in form 'file'" }, { status: 400 });
     }
 
-    const results: any[] = [];
-    for (const file of files) {
-      const uploaded = await uploadToDriveMultipart(accessToken, targetFolderId || parentId, file);
+    // cél almappa (ha a tripnek nincs mappa-id-je, a rootba megy – de beírjuk a sheetet akkor is)
+    const subName: "Photos" | "Documents" =
+      sheetHint === "Photos" || (category === "image" && sheetHint !== "Documents")
+        ? "Photos"
+        : "Documents";
 
-      if (category === "image" || sheetHint === "Photos") {
-        // Photos sheet: id..archived_at (A..L)
-        const row = [
-          genId("PHOTO"),                   // A id
-          tripId,                           // B trip_id
-          title || file.name,               // C title
-          uploaded.id,                      // D drive_file_id
-          file.type || "image/jpeg",        // E mimeType
-          uploaded.webViewLink || "",       // F webViewLink
-          `https://drive.google.com/uc?id=${uploaded.id}&export=download`, // G webContentLink
-          uploaded.thumbnailLink || "",     // H thumbnailLink
-          String(file.size || ""),          // I size
-          nowISO(),                         // J created_at
-          uploaderEmail,                    // K uploader_user_id
-          "",                               // L archived_at
-        ];
-        await sheetsAppend(PHOTOS_SHEET_A1, [row]);
-        results.push({ kind: "photo", id: row[0], drive_file_id: uploaded.id });
-      } else {
-        // Documents sheet: id..doc_visibility (A..M)
-        const row = [
-          genId("DOC"),                     // A id
-          tripId,                           // B trip_id
-          title || file.name,               // C title
-          uploaded.id,                      // D drive_file_id
-          file.type || "application/octet-stream", // E mimeType
-          uploaded.webViewLink || "",       // F webViewLink
-          `https://drive.google.com/uc?id=${uploaded.id}&export=download`, // G webContentLink
-          uploaded.thumbnailLink || "",     // H thumbnailLink
-          String(file.size || ""),          // I size
-          nowISO(),                         // J created_at
-          uploaderEmail,                    // K uploader_user_id
-          "",                               // L archived_at
-          docVisibility === "public" ? "public" : "private", // M doc_visibility
-        ];
-        await sheetsAppend(DOCS_SHEET_A1, [row]);
-        results.push({ kind: "document", id: row[0], drive_file_id: uploaded.id });
+    const targetParentId = await ensureSubfolder(accessToken, trip.drive_folder_id, subName);
+
+    const results: Array<{ok: boolean; kind: "photo"|"document"; id?: string; drive_file_id?: string; error?: string}> = [];
+
+    for (const file of files) {
+      try {
+        const uploaded = await uploadToDriveMultipart(accessToken, targetParentId, file);
+
+        if (subName === "Photos") {
+          const row = [
+            genId("PHOTO"),                       // A id
+            tripId,                               // B trip_id
+            title || file.name,                   // C title
+            uploaded.id,                          // D drive_file_id
+            file.type || "image/jpeg",            // E mimeType
+            uploaded.webViewLink || "",           // F webViewLink
+            `https://drive.google.com/uc?id=${uploaded.id}&export=download`, // G webContentLink
+            uploaded.thumbnailLink || "",         // H thumbnailLink
+            String(file.size || ""),              // I size
+            nowISO(),                             // J created_at
+            email,                                // K uploader_user_id
+            "",                                   // L archived_at
+          ];
+          await sheetsAppend(PHOTOS_A1, [row]);
+          results.push({ ok: true, kind: "photo", id: row[0], drive_file_id: uploaded.id });
+        } else {
+          const row = [
+            genId("DOC"),                         // A id
+            tripId,                               // B trip_id
+            title || file.name,                   // C title
+            uploaded.id,                          // D drive_file_id
+            file.type || "application/octet-stream", // E mimeType
+            uploaded.webViewLink || "",           // F webViewLink
+            `https://drive.google.com/uc?id=${uploaded.id}&export=download`, // G webContentLink
+            uploaded.thumbnailLink || "",         // H thumbnailLink
+            String(file.size || ""),              // I size
+            nowISO(),                             // J created_at
+            email,                                // K uploader_user_id
+            "",                                   // L archived_at
+            docVis,                               // M doc_visibility
+          ];
+          await sheetsAppend(DOCS_A1, [row]);
+          results.push({ ok: true, kind: "document", id: row[0], drive_file_id: uploaded.id });
+        }
+      } catch (e: any) {
+        console.error("upload item failed:", e?.message || e);
+        results.push({ ok: false, kind: subName === "Photos" ? "photo" : "document", error: String(e?.message || e) });
       }
     }
 
-    return NextResponse.json({ ok: true, items: results }, { status: 200 });
+    // ha minden darab bukott, 500; ha vegyes, 207 Multi-Status helyett 200 + részletes eredmények
+    const allFailed = results.length > 0 && results.every(r => !r.ok);
+    return NextResponse.json({ ok: !allFailed, items: results }, { status: allFailed ? 500 : 200 });
+
   } catch (e: any) {
-    console.error("/api/drive/upload error:", e?.message || e);
-    return NextResponse.json({ error: "Upload error" }, { status: 500 });
+    console.error("/api/drive/upload fatal:", e?.message || e);
+    return NextResponse.json({ error: "Upload fatal error", detail: String(e?.message || e) }, { status: 500 });
   }
 }
