@@ -9,6 +9,20 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 
+function pickInlineUrl(mime: string, driveId: string, webViewLink: string, webContentLink: string) {
+  const id = encodeURIComponent(driveId);
+  if (mime?.startsWith("image/")) {
+    // Képnél böngészőben megjelenő inline nézet
+    return `https://drive.google.com/uc?export=view&id=${id}`;
+  }
+  if (mime === "application/pdf") {
+    // PDF beépített előnézet
+    return `https://drive.google.com/file/d/${id}/preview`;
+  }
+  // Egyéb: próbáld a view linket, ha nincs, marad a content link
+  return webViewLink || webContentLink || (driveId ? `https://drive.google.com/file/d/${id}/view` : "");
+}
+
 export async function GET(
   _req: NextRequest,
   ctx: { params: Promise<{ id: string }> }
@@ -18,13 +32,13 @@ export async function GET(
   if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (String(row[11] || "")) return NextResponse.json({ error: "Archived" }, { status: 410 });
 
-  // próbáljuk a webContentLink-et; ha nincs, fallback az uc?id=... linkre
-  const webContent = String(row[6] || "");
   const driveId = String(row[3] || "");
-  const fallback = driveId ? `https://drive.google.com/uc?id=${encodeURIComponent(driveId)}&export=download` : "";
-  const url = webContent || fallback;
+  const mime = String(row[4] || "");
+  const webViewLink = String(row[5] || "");
+  const webContentLink = String(row[6] || "");
+
+  const url = pickInlineUrl(mime, driveId, webViewLink, webContentLink);
   if (!url) return NextResponse.json({ error: "No link" }, { status: 404 });
 
-  // 302 redirect – a böngésző közvetlenül a Drive-ból tölti
   return NextResponse.redirect(url);
 }

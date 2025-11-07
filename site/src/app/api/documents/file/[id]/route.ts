@@ -20,6 +20,17 @@ async function getTripOwnerEmail(tripId: string) {
   return hit ? String(hit[5] || "").toLowerCase() : null;
 }
 
+function pickInlineUrl(mime: string, driveId: string, webViewLink: string, webContentLink: string) {
+  const id = encodeURIComponent(driveId);
+  if (mime?.startsWith("image/")) {
+    return `https://drive.google.com/uc?export=view&id=${id}`;
+  }
+  if (mime === "application/pdf") {
+    return `https://drive.google.com/file/d/${id}/preview`;
+  }
+  return webViewLink || webContentLink || (driveId ? `https://drive.google.com/file/d/${id}/view` : "");
+}
+
 export async function GET(
   _req: NextRequest,
   ctx: { params: Promise<{ id: string }> }
@@ -33,7 +44,6 @@ export async function GET(
   const visibility = String(row[12] || "private").toLowerCase() as "public"|"private";
 
   if (visibility === "private") {
-    // csak a tulaj
     const session: any = await getServerSession(authOptions);
     const email = (session?.user?.email || "").toLowerCase();
     const owner = (await getTripOwnerEmail(tripId)) || "";
@@ -42,12 +52,13 @@ export async function GET(
     }
   }
 
-  const webContent = String(row[6] || "");
   const driveId = String(row[3] || "");
-  const fallback = driveId ? `https://drive.google.com/uc?id=${encodeURIComponent(driveId)}&export=download` : "";
-  const url = webContent || fallback;
+  const mime = String(row[4] || "");
+  const webViewLink = String(row[5] || "");
+  const webContentLink = String(row[6] || "");
+
+  const url = pickInlineUrl(mime, driveId, webViewLink, webContentLink);
   if (!url) return NextResponse.json({ error: "No link" }, { status: 404 });
 
   return NextResponse.redirect(url);
 }
-
