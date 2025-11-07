@@ -68,15 +68,20 @@ function TripDetail({ id }: { id: string }) {
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [docs, setDocs] = useState<DocumentItem[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+
   const [msgPhotos, setMsgPhotos] = useState("");
   const [msgDocs, setMsgDocs] = useState("");
   const [msgExp, setMsgExp] = useState("");
   const [notFound, setNotFound] = useState(false);
 
-  // kis inline állapotok a menükhöz / modál-k nélküli szerkesztéshez
+  // menük/szerkesztések
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [editTitleId, setEditTitleId] = useState<string | null>(null);
   const [editTitleValue, setEditTitleValue] = useState<string>("");
+
+  // expenses inline edit
+  const [editExpId, setEditExpId] = useState<string | null>(null);
+  const [editExp, setEditExp] = useState<Partial<Expense>>({});
 
   async function refreshAll() {
     const [pRes, dRes, eRes] = await Promise.all([
@@ -120,7 +125,7 @@ function TripDetail({ id }: { id: string }) {
   if (notFound) return <main className="p-6"><h2>Nincs ilyen út</h2></main>;
   if (!trip) return <main className="p-6"><p>Betöltés…</p></main>;
 
-  // ======== UPLOAD HANDLERS ========
+  // ======== UPLOAD HANDLERS (fotó/doksi) ========
   async function handleUploadPhotos(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setMsgPhotos("Feltöltés…");
@@ -139,7 +144,6 @@ function TripDetail({ id }: { id: string }) {
       setMsgPhotos("Hiba ❌ " + (j?.error || r.status));
     }
   }
-
   async function handleUploadDocs(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setMsgDocs("Feltöltés…");
@@ -160,7 +164,7 @@ function TripDetail({ id }: { id: string }) {
     }
   }
 
-  // ======== EDIT/TGL/DELETE HANDLERS ========
+  // ======== MEDIA EDIT/TGL/DELETE ========
   function openEdit(id: string, currentTitle?: string) {
     setOpenMenuId(null);
     setEditTitleId(id);
@@ -170,8 +174,6 @@ function TripDetail({ id }: { id: string }) {
     setEditTitleId(null);
     setEditTitleValue("");
   }
-
-  // Fotó: cím mentése
   async function savePhotoTitle(photoId: string) {
     const r = await fetch(`/api/photos/${encodeURIComponent(photoId)}`, {
       method: "PATCH",
@@ -179,14 +181,8 @@ function TripDetail({ id }: { id: string }) {
       body: JSON.stringify({ title: editTitleValue }),
       credentials: "include",
     });
-    if (r.ok) {
-      closeEdit();
-      await refreshAll();
-      router.refresh();
-    }
+    if (r.ok) { closeEdit(); await refreshAll(); router.refresh(); }
   }
-
-  // Doki: cím mentése
   async function saveDocTitle(docId: string) {
     const r = await fetch(`/api/documents/${encodeURIComponent(docId)}`, {
       method: "PATCH",
@@ -194,45 +190,64 @@ function TripDetail({ id }: { id: string }) {
       body: JSON.stringify({ title: editTitleValue }),
       credentials: "include",
     });
-    if (r.ok) {
-      closeEdit();
-      await refreshAll();
-      router.refresh();
-    }
+    if (r.ok) { closeEdit(); await refreshAll(); router.refresh(); }
   }
-
-  // Doki: visibility váltás
-  async function toggleDocVisibility(doc: DocumentItem) {
-    const next = doc.doc_visibility === "public" ? "private" : "public";
-    const r = await fetch(`/api/documents/${encodeURIComponent(doc.id)}`, {
+  async function toggleDocVisibility(d: DocumentItem) {
+    const next = d.doc_visibility === "public" ? "private" : "public";
+    const r = await fetch(`/api/documents/${encodeURIComponent(d.id)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ doc_visibility: next }),
       credentials: "include",
     });
-    if (r.ok) {
-      setOpenMenuId(null);
-      await refreshAll();
-      router.refresh();
-    }
+    if (r.ok) { setOpenMenuId(null); await refreshAll(); router.refresh(); }
   }
-
-  // Fotó/Doki törlés (soft)
   async function deletePhoto(photoId: string) {
     if (!confirm("Biztosan törlöd ezt a fotót? (Visszavonhatatlan)")) return;
-    const r = await fetch(`/api/photos/${encodeURIComponent(photoId)}`, {
-      method: "DELETE",
-      credentials: "include",
-    });
-    if (r.ok) {
-      setOpenMenuId(null);
-      await refreshAll();
-      router.refresh();
-    }
+    const r = await fetch(`/api/photos/${encodeURIComponent(photoId)}`, { method: "DELETE", credentials: "include" });
+    if (r.ok) { setOpenMenuId(null); await refreshAll(); router.refresh(); }
   }
   async function deleteDoc(docId: string) {
     if (!confirm("Biztosan törlöd ezt a dokumentumot? (Visszavonhatatlan)")) return;
-    const r = await fetch(`/api/documents/${encodeURIComponent(docId)}`, {
+    const r = await fetch(`/api/documents/${encodeURIComponent(docId)}`, { method: "DELETE", credentials: "include" });
+    if (r.ok) { setOpenMenuId(null); await refreshAll(); router.refresh(); }
+  }
+
+  // ======== EXPENSES EDIT/DELETE ========
+  function openEditExp(ex: Expense) {
+    setOpenMenuId(null);
+    setEditExpId(ex.id);
+    setEditExp({ ...ex });
+  }
+  function closeEditExp() {
+    setEditExpId(null);
+    setEditExp({});
+  }
+  async function saveExpense() {
+    if (!editExpId) return;
+    const payload = {
+      date: editExp.date,
+      category: editExp.category,
+      description: editExp.description,
+      amount: Number(editExp.amount),
+      currency: editExp.currency,
+      payment_method: editExp.payment_method,
+    };
+    const r = await fetch(`/api/expenses/${encodeURIComponent(editExpId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      credentials: "include",
+    });
+    if (r.ok) {
+      closeEditExp();
+      await refreshAll();
+      router.refresh();
+    }
+  }
+  async function deleteExpense(id: string) {
+    if (!confirm("Biztosan törlöd ezt a költést? (Visszavonhatatlan)")) return;
+    const r = await fetch(`/api/expenses/${encodeURIComponent(id)}`, {
       method: "DELETE",
       credentials: "include",
     });
@@ -242,8 +257,6 @@ function TripDetail({ id }: { id: string }) {
       router.refresh();
     }
   }
-
-  // ======== RENDER ========
 
   const KebabBtn = ({ onClick }: { onClick: () => void }) => (
     <button
@@ -252,7 +265,6 @@ function TripDetail({ id }: { id: string }) {
       className="absolute top-2 right-2 rounded-full p-1.5 bg-white/90 hover:bg-white shadow border"
       aria-label="Műveletek"
     >
-      {/* három pötty minimal */}
       <svg width="16" height="16" viewBox="0 0 24 24" className="opacity-80">
         <circle cx="5" cy="12" r="1.8"></circle>
         <circle cx="12" cy="12" r="1.8"></circle>
@@ -261,26 +273,16 @@ function TripDetail({ id }: { id: string }) {
     </button>
   );
 
-  const MiniMenu = ({
-    children,
-    onClose,
-  }: {
-    children: React.ReactNode;
-    onClose: () => void;
-  }) => (
+  const MiniMenu = ({ children, onClose }: { children: React.ReactNode; onClose: () => void }) => (
     <div className="absolute top-10 right-2 z-10 bg-white border rounded-lg shadow-lg min-w-[160px]">
       <div className="p-1">{children}</div>
-      <button
-        type="button"
-        onClick={onClose}
-        className="w-full text-xs text-gray-500 py-1 hover:bg-gray-50 border-t"
-      >
+      <button type="button" onClick={onClose} className="w-full text-xs text-gray-500 py-1 hover:bg-gray-50 border-t">
         Bezár
       </button>
     </div>
   );
 
-  if (notFound) return <main className="p-6"><h2>Nincs ilyen út</h2></main>;
+  // ======== RENDER ========
 
   return (
     <main className="p-6 grid gap-6">
@@ -291,12 +293,7 @@ function TripDetail({ id }: { id: string }) {
           {trip!.destination} • {niceDate(trip!.start_date)} → {niceDate(trip!.end_date)}
         </div>
         {trip!.drive_folder_link && (
-          <a
-            href={trip!.drive_folder_link}
-            target="_blank"
-            rel="noreferrer"
-            className="text-sm text-blue-600 underline inline-block mt-1"
-          >
+          <a href={trip!.drive_folder_link} target="_blank" rel="noreferrer" className="text-sm text-blue-600 underline inline-block mt-1">
             📁 Megnyitás a Google Drive-ban
           </a>
         )}
@@ -344,7 +341,6 @@ function TripDetail({ id }: { id: string }) {
                     />
                   </a>
 
-                  {/* Cím megjelenítés / szerkesztés */}
                   <div className="p-2 border-t bg-white flex items-center gap-2">
                     {isEditing ? (
                       <>
@@ -355,18 +351,10 @@ function TripDetail({ id }: { id: string }) {
                           placeholder="Cím"
                           autoFocus
                         />
-                        <button
-                          className="text-xs border rounded px-2 py-1"
-                          onClick={() => savePhotoTitle(m.id)}
-                          type="button"
-                        >
+                        <button className="text-xs border rounded px-2 py-1" onClick={() => savePhotoTitle(m.id)} type="button">
                           Mentés
                         </button>
-                        <button
-                          className="text-xs text-gray-600"
-                          onClick={closeEdit}
-                          type="button"
-                        >
+                        <button className="text-xs text-gray-600" onClick={closeEdit} type="button">
                           Mégse
                         </button>
                       </>
@@ -375,24 +363,15 @@ function TripDetail({ id }: { id: string }) {
                     )}
                   </div>
 
-                  {/* Owner menü */}
                   {isOwner && (
                     <>
                       <KebabBtn onClick={() => setOpenMenuId(openMenuId === m.id ? null : m.id)} />
                       {openMenuId === m.id && (
                         <MiniMenu onClose={() => setOpenMenuId(null)}>
-                          <button
-                            type="button"
-                            className="w-full text-left text-sm px-3 py-2 hover:bg-gray-50 rounded"
-                            onClick={() => openEdit(m.id, m.title)}
-                          >
+                          <button type="button" className="w-full text-left text-sm px-3 py-2 hover:bg-gray-50 rounded" onClick={() => openEdit(m.id, m.title)}>
                             ✏️ Cím szerkesztése
                           </button>
-                          <button
-                            type="button"
-                            className="w-full text-left text-sm px-3 py-2 hover:bg-red-50 text-red-600 rounded"
-                            onClick={() => deletePhoto(m.id)}
-                          >
+                          <button type="button" className="w-full text-left text-sm px-3 py-2 hover:bg-red-50 text-red-600 rounded" onClick={() => deletePhoto(m.id)}>
                             🗑️ Törlés
                           </button>
                         </MiniMenu>
@@ -414,13 +393,7 @@ function TripDetail({ id }: { id: string }) {
 
         {isOwner && (
           <form onSubmit={handleUploadDocs} className="flex flex-wrap items-center gap-2">
-            <input
-              type="file"
-              name="file"
-              accept=".pdf,.doc,.docx,.xls,.xlsx,.ods,.txt,image/*"
-              multiple
-              required
-            />
+            <input type="file" name="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ods,.txt,image/*" multiple required />
             <input type="text" name="title" placeholder="Cím (opcionális)" className="border rounded px-2 py-1" />
             <select name="doc_visibility" defaultValue="private" className="border rounded px-2 py-1">
               <option value="private">Privát</option>
@@ -459,7 +432,6 @@ function TripDetail({ id }: { id: string }) {
                     </div>
                   </a>
 
-                  {/* Alsó sáv: cím + badge */}
                   <div className="p-3 border-t bg-white">
                     {isEditing ? (
                       <div className="flex items-center gap-2">
@@ -470,26 +442,16 @@ function TripDetail({ id }: { id: string }) {
                           placeholder="Cím"
                           autoFocus
                         />
-                        <button
-                          className="text-xs border rounded px-2 py-1"
-                          onClick={() => saveDocTitle(d.id)}
-                          type="button"
-                        >
+                        <button className="text-xs border rounded px-2 py-1" onClick={() => saveDocTitle(d.id)} type="button">
                           Mentés
                         </button>
-                        <button
-                          className="text-xs text-gray-600"
-                          onClick={closeEdit}
-                          type="button"
-                        >
+                        <button className="text-xs text-gray-600" onClick={() => { setEditTitleId(null); setEditTitleValue(""); }} type="button">
                           Mégse
                         </button>
                       </div>
                     ) : (
                       <div className="flex items-center justify-between gap-2">
-                        <div className="font-medium text-sm truncate">
-                          {d.title || d.mimeType || "dokumentum"}
-                        </div>
+                        <div className="font-medium text-sm truncate">{d.title || d.mimeType || "dokumentum"}</div>
                         {d.doc_visibility === "private" && (
                           <span className="text-[11px] px-2 py-0.5 rounded-full bg-black/70 text-white">Privát</span>
                         )}
@@ -497,31 +459,18 @@ function TripDetail({ id }: { id: string }) {
                     )}
                   </div>
 
-                  {/* Owner menü */}
                   {isOwner && (
                     <>
                       <KebabBtn onClick={() => setOpenMenuId(openMenuId === d.id ? null : d.id)} />
                       {openMenuId === d.id && (
                         <MiniMenu onClose={() => setOpenMenuId(null)}>
-                          <button
-                            type="button"
-                            className="w-full text-left text-sm px-3 py-2 hover:bg-gray-50 rounded"
-                            onClick={() => openEdit(d.id, d.title)}
-                          >
+                          <button type="button" className="w-full text-left text-sm px-3 py-2 hover:bg-gray-50 rounded" onClick={() => openEdit(d.id, d.title)}>
                             ✏️ Cím szerkesztése
                           </button>
-                          <button
-                            type="button"
-                            className="w-full text-left text-sm px-3 py-2 hover:bg-gray-50 rounded"
-                            onClick={() => toggleDocVisibility(d)}
-                          >
+                          <button type="button" className="w-full text-left text-sm px-3 py-2 hover:bg-gray-50 rounded" onClick={() => toggleDocVisibility(d)}>
                             ⚠️ {d.doc_visibility === "public" ? "Átváltás privátra" : "Átváltás publikussá"}
                           </button>
-                          <button
-                            type="button"
-                            className="w-full text-left text-sm px-3 py-2 hover:bg-red-50 text-red-600 rounded"
-                            onClick={() => deleteDoc(d.id)}
-                          >
+                          <button type="button" className="w-full text-left text-sm px-3 py-2 hover:bg-red-50 text-red-600 rounded" onClick={() => deleteDoc(d.id)}>
                             🗑️ Törlés
                           </button>
                         </MiniMenu>
@@ -535,7 +484,7 @@ function TripDetail({ id }: { id: string }) {
         )}
       </section>
 
-      {/* KÖLTÉSEK – a következő körben kap 3 pöttyöt */}
+      {/* KÖLTÉSEK */}
       <section className="border rounded-lg p-3">
         <h2 className="text-lg font-medium mb-2">💸 Költések</h2>
 
@@ -557,16 +506,108 @@ function TripDetail({ id }: { id: string }) {
         )}
 
         <ul className="grid gap-2 mt-3">
-          {expenses.map((ex) => (
-            <li key={ex.id} className="border rounded px-3 py-2">
-              <div className="font-medium">
-                {ex.date} • {ex.category} • {ex.amount} {ex.currency}
-              </div>
-              <div className="text-xs text-gray-600">
-                {ex.description} • Fizetés: {ex.payment_method}
-              </div>
-            </li>
-          ))}
+          {expenses.map((ex) => {
+            const isEditing = editExpId === ex.id;
+            return (
+              <li key={ex.id} className="relative border rounded px-3 py-2 bg-white">
+                {isEditing ? (
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <input
+                      type="date"
+                      value={editExp.date || ""}
+                      onChange={(e) => setEditExp(s => ({ ...s, date: e.target.value }))}
+                      className="border rounded px-2 py-1"
+                    />
+                    <input
+                      value={editExp.category || ""}
+                      onChange={(e) => setEditExp(s => ({ ...s, category: e.target.value }))}
+                      placeholder="Kategória"
+                      className="border rounded px-2 py-1"
+                    />
+                    <input
+                      value={editExp.description || ""}
+                      onChange={(e) => setEditExp(s => ({ ...s, description: e.target.value }))}
+                      placeholder="Megjegyzés"
+                      className="border rounded px-2 py-1 sm:col-span-2"
+                    />
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={Number(editExp.amount ?? 0)}
+                      onChange={(e) => setEditExp(s => ({ ...s, amount: Number(e.target.value) }))}
+                      placeholder="Összeg"
+                      className="border rounded px-2 py-1"
+                    />
+                    <input
+                      value={editExp.currency || ""}
+                      onChange={(e) => setEditExp(s => ({ ...s, currency: e.target.value }))}
+                      placeholder="Pénznem"
+                      className="border rounded px-2 py-1"
+                    />
+                    <input
+                      value={editExp.payment_method || ""}
+                      onChange={(e) => setEditExp(s => ({ ...s, payment_method: e.target.value }))}
+                      placeholder="Fizetési mód"
+                      className="border rounded px-2 py-1"
+                    />
+                    <div className="flex items-center gap-2 sm:col-span-2">
+                      <button type="button" onClick={saveExpense} className="border rounded px-3 py-1">Mentés</button>
+                      <button type="button" onClick={closeEditExp} className="text-gray-600">Mégse</button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="font-medium">
+                      {ex.date} • {ex.category} • {ex.amount} {ex.currency}
+                    </div>
+                    <div className="text-xs text-gray-600">
+                      {ex.description} • Fizetés: {ex.payment_method}
+                    </div>
+                  </>
+                )}
+
+                {isOwner && !isEditing && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setOpenMenuId(openMenuId === ex.id ? null : ex.id)}
+                      className="absolute top-2 right-2 rounded-full p-1.5 bg-white/90 hover:bg-white shadow border"
+                      aria-label="Műveletek"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" className="opacity-80">
+                        <circle cx="5" cy="12" r="1.8"></circle>
+                        <circle cx="12" cy="12" r="1.8"></circle>
+                        <circle cx="19" cy="12" r="1.8"></circle>
+                      </svg>
+                    </button>
+                    {openMenuId === ex.id && (
+                      <div className="absolute top-10 right-2 z-10 bg-white border rounded-lg shadow-lg min-w-[160px]">
+                        <div className="p-1">
+                          <button
+                            type="button"
+                            className="w-full text-left text-sm px-3 py-2 hover:bg-gray-50 rounded"
+                            onClick={() => { openEditExp(ex); }}
+                          >
+                            ✏️ Szerkesztés
+                          </button>
+                          <button
+                            type="button"
+                            className="w-full text-left text-sm px-3 py-2 hover:bg-red-50 text-red-600 rounded"
+                            onClick={() => deleteExpense(ex.id)}
+                          >
+                            🗑️ Törlés
+                          </button>
+                        </div>
+                        <button type="button" onClick={() => setOpenMenuId(null)} className="w-full text-xs text-gray-500 py-1 hover:bg-gray-50 border-t">
+                          Bezár
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+              </li>
+            );
+          })}
           {expenses.length === 0 && <em className="text-gray-600">Még nincs költés.</em>}
         </ul>
       </section>
@@ -574,12 +615,12 @@ function TripDetail({ id }: { id: string }) {
   );
 }
 
-// külön definiáltam lejjebb, hogy a TS ne kötözködjön a top-levelnél
+// a "Költés hozzáadás" handler a komponensen belül van használva:
 async function handleAddExpense(e: React.FormEvent<HTMLFormElement>) {
   e.preventDefault();
   const fd = new FormData(e.currentTarget);
   const payload = {
-    trip_id: (fd.get("trip_id") as string) || "", // a valódi form fenti komponensben tölti
+    trip_id: (fd.get("trip_id") as string) || "",
     date: String(fd.get("date") || ""),
     category: String(fd.get("category") || "other"),
     description: String(fd.get("description") || ""),
@@ -587,5 +628,4 @@ async function handleAddExpense(e: React.FormEvent<HTMLFormElement>) {
     currency: String(fd.get("currency") || "HUF"),
     payment_method: String(fd.get("payment_method") || "card"),
   };
-  // ez a placeholder; a fenti komponensben felülírjuk egy lokális implementációval.
 }
