@@ -47,12 +47,12 @@ export async function PATCH(
 
     const body = await req.json().catch(() => ({}));
 
-    // engedett mezők
+    // engedett mezők (Sheets felé stringsorral dolgozunk)
     const next = [...row];
     if (typeof body.date === "string") next[2] = body.date;
     if (typeof body.category === "string") next[3] = body.category;
     if (typeof body.description === "string") next[4] = body.description;
-    if (typeof body.amount !== "undefined") next[5] = Number(body.amount);
+    if (typeof body.amount !== "undefined") next[5] = String(Number(body.amount));
     if (typeof body.currency === "string") next[6] = body.currency;
     if (typeof body.payment_method === "string") next[7] = body.payment_method;
 
