@@ -1,64 +1,95 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { sheetsFindRowBy, sheetsGet } from "@/lib/sheets";
+import { sheetsGet } from "@/lib/sheets";
 
-// Documents: 0 id | 1 trip_id | 2 title | 3 drive_file_id | 4 mimeType
-// 5 webViewLink | 6 webContentLink | 7 thumbnailLink | 8 size | 9 created_at
-// 10 uploader | 11 archived_at | 12 doc_visibility
+const TRIPS_RANGE = "Trips!A2:I";
 const DOCS_RANGE  = "Documents!A2:M";
-const TRIPS_RANGE = "Trips!A2:I"; // owner @ index 5
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 
-async function getTripOwnerEmail(tripId: string) {
-  const { values } = await sheetsGet(TRIPS_RANGE);
-  const rows = values ?? [];
-  const hit = rows.find(r => String(r?.[0] || "") === tripId);
-  return hit ? String(hit[5] || "").toLowerCase() : null;
-}
+async function loadByDocId(docId: string) {
+  const dRes = await sheetsGet(DOCS_RANGE);
+  const dRows = dRes.values ?? [];
+  const r = dRows.find((x: any[]) => String(x?.[0] ?? "").trim() === docId);
+  if (!r) return { trip: null as any, doc: null as any };
 
-function pickInlineUrl(mime: string, driveId: string, webViewLink: string, webContentLink: string) {
-  const id = encodeURIComponent(driveId);
-  if (mime?.startsWith("image/")) {
-    return `https://drive.google.com/uc?export=view&id=${id}`;
-  }
-  if (mime === "application/pdf") {
-    return `https://drive.google.com/file/d/${id}/preview`;
-  }
-  return webViewLink || webContentLink || (driveId ? `https://drive.google.com/file/d/${id}/view` : "");
+  const doc = {
+    id: String(r?.[0] ?? ""),
+    trip_id: String(r?.[1] ?? ""),
+    title: String(r?.[2] ?? ""),
+    drive_file_id: String(r?.[3] ?? ""),
+    mimeType: String(r?.[4] ?? ""),
+    thumbnailLink: String(r?.[7] ?? ""),
+    uploader_user_id: String(r?.[10] ?? ""),
+    archived_at: String(r?.[11] ?? ""),
+    doc_visibility: (String(r?.[12] ?? "private").toLowerCase() === "public" ? "public" : "private") as "public" | "private",
+  };
+
+  const tRes = await sheetsGet(TRIPS_RANGE);
+  const tRows = tRes.values ?? [];
+  const t = tRows.find((x: any[]) => String(x?.[0] ?? "").trim() === doc.trip_id);
+  if (!t) return { trip: null as any, doc };
+
+  const trip = {
+    id: String(t?.[0] ?? ""),
+    owner_user_id: String(t?.[5] ?? "").toLowerCase(),
+    visibility: (String(t?.[8] ?? "").trim().toLowerCase() === "public" ? "public" : "private") as "public" | "private",
+  };
+
+  return { trip, doc };
 }
 
 export async function GET(
   _req: NextRequest,
-  ctx: { params: Promise<{ id: string }> }
+  ctx: { params: Promise<{ id?: string }> }
 ) {
-  const { id } = await ctx.params;
-  const { row } = await sheetsFindRowBy(DOCS_RANGE, r => (r?.[0] || "") === id);
-  if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  if (String(row[11] || "")) return NextResponse.json({ error: "Archived" }, { status: 410 });
+  try {
+    const p = await ctx.params;
+    const id = (p?.id ?? "").trim();
+    if (!id) return new Response("Missing id", { status: 400 });
 
-  const tripId = String(row[1] || "");
-  const visibility = String(row[12] || "private").toLowerCase() as "public"|"private";
-
-  if (visibility === "private") {
     const session: any = await getServerSession(authOptions);
-    const email = (session?.user?.email || "").toLowerCase();
-    const owner = (await getTripOwnerEmail(tripId)) || "";
-    if (!email || email !== owner) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    const viewerEmail = (session?.user?.email || "").toLowerCase();
+    const accessToken: string = session?.accessToken || "";
+
+    const { trip, doc } = await loadByDocId(id);
+    if (!doc || !trip) return new Response("Not found", { status: 404 });
+    if (doc.archived_at) return new Response("Not found", { status: 404 });
+
+    const isOwner = !!viewerEmail && viewerEmail === trip.owner_user_id;
+
+    // trip: private → csak owner
+    if (trip.visibility === "private" && !isOwner) {
+      return new Response("Not found", { status: 404 });
     }
+
+    // trip: public → doc csak public (ownernek bármi)
+    if (trip.visibility === "public" && doc.doc_visibility !== "public" && !isOwner) {
+      return new Response("Not found", { status: 404 });
+    }
+
+    if (!accessToken) return new Response("Unauthorized", { status: 401 });
+
+    const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(doc.drive_file_id)}?alt=media`;
+    const r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!r.ok) {
+      const txt = await r.text().catch(() => "");
+      return new Response(`Drive fetch error: ${r.status} ${txt}`, { status: 502 });
+    }
+
+    const headers = new Headers();
+    headers.set("Content-Type", doc.mimeType || "application/octet-stream");
+    if (trip.visibility === "public" && doc.doc_visibility === "public") {
+      headers.set("Cache-Control", "public, max-age=3600, s-maxage=3600");
+    } else {
+      headers.set("Cache-Control", "no-store");
+    }
+    return new Response(r.body, { status: 200, headers });
+  } catch (e: any) {
+    console.error("/api/documents/file/[id] error:", e?.message || e);
+    return new Response("Internal error", { status: 500 });
   }
-
-  const driveId = String(row[3] || "");
-  const mime = String(row[4] || "");
-  const webViewLink = String(row[5] || "");
-  const webContentLink = String(row[6] || "");
-
-  const url = pickInlineUrl(mime, driveId, webViewLink, webContentLink);
-  if (!url) return NextResponse.json({ error: "No link" }, { status: 404 });
-
-  return NextResponse.redirect(url);
 }
