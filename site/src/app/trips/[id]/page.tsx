@@ -90,6 +90,7 @@ function TripDetail({ id }: { id: string }) {
 
   // Dokumentum előnézet modál állapot
   const [docPreview, setDocPreview] = useState<null | {
+    mediaId: string;
     driveId: string;
     title?: string;
     mime?: string;
@@ -455,7 +456,7 @@ function TripDetail({ id }: { id: string }) {
               return (
                 <article
                   key={m.id}
-                  onClick={() => setDocPreview({ driveId: m.drive_file_id, title: m.title, mime: m.mimeType })}
+                  onClick={() => setDocPreview({ mediaId: m.id,driveId: m.drive_file_id, title: m.title, mime: m.mimeType })}
                   style={{ cursor: "pointer", border: "1px solid #eee", borderRadius: 12, overflow: "hidden", background: m.media_visibility === "public" ? "#fff" : "#fafafa", boxShadow: "0 1px 3px rgba(0,0,0,.06)" }}
                   title={m.title}
                 >
@@ -523,9 +524,9 @@ function TripDetail({ id }: { id: string }) {
               </button>
 
               {isImageByMeta(docPreview.mime, docPreview.title) ? (
-                <img src={`/api/media/file/${docPreview.driveId}`} alt={docPreview.title || "Kép"} style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000" }} />
+                <img src={`/api/media/file/${docPreview.mediaId}`} alt={docPreview.title || "Kép"} style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000" }} />
               ) : (
-                <iframe src={`https://drive.google.com/file/d/${docPreview.driveId}/preview`} title={docPreview.title || "Előnézet"} allow="autoplay" style={{ width: "100%", height: "100%", border: 0, background: "#fff" }} />
+                <iframe src={`https://drive.google.com/file/d/${docPreview.mediaId}/preview`} title={docPreview.title || "Előnézet"} allow="autoplay" style={{ width: "100%", height: "100%", border: 0, background: "#fff" }} />
               )}
             </div>
           </div>

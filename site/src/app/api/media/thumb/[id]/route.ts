@@ -3,21 +3,46 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { sheetsGet } from "@/lib/sheets";
 
+const TRIPS_RANGE = "Trips!A2:I";
 const MEDIA_RANGE = "Media!A2:O";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 
-async function findMediaRowById(id: string) {
-  const { values } = await sheetsGet(MEDIA_RANGE);
-  const rows = values ?? [];
-  const row = rows.find((r: any[]) => String(r?.[0] ?? "").trim() === id);
-  return row;
+async function getTripAndMedia(mediaId: string) {
+  const mRes = await sheetsGet(MEDIA_RANGE);
+  const mRows = mRes.values ?? [];
+  const m = mRows.find((r: any[]) => String(r?.[0] ?? "").trim() === mediaId);
+  if (!m) return { trip: null as any, media: null as any };
+
+  const media = {
+    id: String(m?.[0] ?? ""),
+    trip_id: String(m?.[1] ?? ""),
+    mimeType: String(m?.[5] ?? ""),
+    drive_file_id: String(m?.[4] ?? ""),
+    thumbnailLink: String(m?.[8] ?? ""),
+    uploader_user_id: String(m?.[11] ?? ""),
+    archived_at: String(m?.[12] ?? ""),
+    media_visibility: (String(m?.[14] ?? "private").toLowerCase() === "public" ? "public" : "private") as "public" | "private",
+  };
+
+  const tRes = await sheetsGet(TRIPS_RANGE);
+  const tRows = tRes.values ?? [];
+  const t = tRows.find((r: any[]) => String(r?.[0] ?? "").trim() === media.trip_id);
+  if (!t) return { trip: null as any, media };
+
+  const trip = {
+    id: String(t?.[0] ?? ""),
+    owner_user_id: String(t?.[5] ?? "").toLowerCase(),
+    visibility: (String(t?.[8] ?? "").trim().toLowerCase() === "public" ? "public" : "private") as "public" | "private",
+  };
+
+  return { trip, media };
 }
 
 export async function GET(
-  req: NextRequest,
+  _req: NextRequest,
   ctx: { params: Promise<{ id?: string }> }
 ) {
   try {
@@ -26,49 +51,49 @@ export async function GET(
     if (!id) return new Response("Missing id", { status: 400 });
 
     const session: any = await getServerSession(authOptions);
+    const viewerEmail = (session?.user?.email || "").toLowerCase();
     const accessToken: string = session?.accessToken || "";
-    if (!accessToken) return new Response("Unauthorized", { status: 401 });
 
-    const row = await findMediaRowById(id);
-    if (!row) return new Response("Not found", { status: 404 });
+    const { trip, media } = await getTripAndMedia(id);
+    if (!media || !trip) return new Response("Not found", { status: 404 });
+    if (media.archived_at) return new Response("Not found", { status: 404 });
 
-    // r[5]=mimeType, r[8]=thumbnailLink, r[4]=drive_file_id
-    const mimeType = String(row[5] ?? "") || "image/jpeg";
-    const thumbLink = String(row[8] ?? "");
-    const driveFileId = String(row[4] ?? "");
+    const isOwner = !!viewerEmail && viewerEmail === trip.owner_user_id;
+    const isUploader = !!viewerEmail && viewerEmail === (media.uploader_user_id || "").toLowerCase();
 
-    // 1) ha van Google által adott thumbnailLink → kérjük le és proxizzuk
-    if (thumbLink) {
-      const r = await fetch(thumbLink, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
+    if (trip.visibility === "private" && !isOwner) return new Response("Not found", { status: 404 });
+    if (media.media_visibility === "private" && !(isOwner || isUploader)) return new Response("Not found", { status: 404 });
+
+    if (media.thumbnailLink) {
+      const r = await fetch(media.thumbnailLink, { headers: { Authorization: `Bearer ${accessToken}` } });
       if (r.ok) {
         const headers = new Headers();
         headers.set("Content-Type", "image/jpeg");
-        headers.set("Cache-Control", "public, max-age=3600, s-maxage=3600");
+        if (media.media_visibility === "public" && trip.visibility === "public") {
+          headers.set("Cache-Control", "public, max-age=3600, s-maxage=3600");
+        } else {
+          headers.set("Cache-Control", "no-store");
+        }
         return new Response(r.body, { status: 200, headers });
       }
-      // ha a thumb nem jött le, esünk a file-fallbackre
     }
 
-    // 2) fallback: a tényleges fájl (kisebb képeknél működik thumbként is)
-    if (!driveFileId) return new Response("No drive_file_id", { status: 500 });
-    const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
-      driveFileId
-    )}?alt=media`;
-
-    const r2 = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-
+    // fallback a teljes fájlra
+    if (!accessToken) return new Response("Unauthorized", { status: 401 });
+    const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(media.drive_file_id)}?alt=media`;
+    const r2 = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
     if (!r2.ok) {
       const txt = await r2.text().catch(() => "");
       return new Response(`Drive fetch error: ${r2.status} ${txt}`, { status: 502 });
     }
 
     const headers = new Headers();
-    headers.set("Content-Type", mimeType.startsWith("image/") ? mimeType : "image/jpeg");
-    headers.set("Cache-Control", "public, max-age=3600, s-maxage=3600");
+    headers.set("Content-Type", media.mimeType?.startsWith("image/") ? media.mimeType : "image/jpeg");
+    if (media.media_visibility === "public" && trip.visibility === "public") {
+      headers.set("Cache-Control", "public, max-age=3600, s-maxage=3600");
+    } else {
+      headers.set("Cache-Control", "no-store");
+    }
     return new Response(r2.body, { status: 200, headers });
   } catch (e: any) {
     console.error("/api/media/thumb/[id] error:", e?.message || e);

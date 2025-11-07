@@ -3,21 +3,45 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { sheetsGet } from "@/lib/sheets";
 
-const MEDIA_RANGE = "Media!A2:O"; // id..media_visibility
+const TRIPS_RANGE = "Trips!A2:I";
+const MEDIA_RANGE = "Media!A2:O";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 
-async function findMediaRowById(id: string) {
-  const { values } = await sheetsGet(MEDIA_RANGE);
-  const rows = values ?? [];
-  const row = rows.find((r: any[]) => String(r?.[0] ?? "").trim() === id);
-  return row;
+async function getTripAndMedia(mediaId: string) {
+  const mRes = await sheetsGet(MEDIA_RANGE);
+  const mRows = mRes.values ?? [];
+  const m = mRows.find((r: any[]) => String(r?.[0] ?? "").trim() === mediaId);
+  if (!m) return { trip: null as any, media: null as any };
+
+  const media = {
+    id: String(m?.[0] ?? ""),
+    trip_id: String(m?.[1] ?? ""),
+    mimeType: String(m?.[5] ?? ""),
+    drive_file_id: String(m?.[4] ?? ""),
+    uploader_user_id: String(m?.[11] ?? ""),
+    archived_at: String(m?.[12] ?? ""),
+    media_visibility: (String(m?.[14] ?? "private").toLowerCase() === "public" ? "public" : "private") as "public" | "private",
+  };
+
+  const tRes = await sheetsGet(TRIPS_RANGE);
+  const tRows = tRes.values ?? [];
+  const t = tRows.find((r: any[]) => String(r?.[0] ?? "").trim() === media.trip_id);
+  if (!t) return { trip: null as any, media };
+
+  const trip = {
+    id: String(t?.[0] ?? ""),
+    owner_user_id: String(t?.[5] ?? "").toLowerCase(),
+    visibility: (String(t?.[8] ?? "").trim().toLowerCase() === "public" ? "public" : "private") as "public" | "private",
+  };
+
+  return { trip, media };
 }
 
 export async function GET(
-  req: NextRequest,
+  _req: NextRequest,
   ctx: { params: Promise<{ id?: string }> }
 ) {
   try {
@@ -25,38 +49,45 @@ export async function GET(
     const id = (p?.id ?? "").trim();
     if (!id) return new Response("Missing id", { status: 400 });
 
-    // session (Google accessToken kell a privát Drive letöltéshez)
     const session: any = await getServerSession(authOptions);
+    const viewerEmail = (session?.user?.email || "").toLowerCase();
     const accessToken: string = session?.accessToken || "";
+
+    const { trip, media } = await getTripAndMedia(id);
+    if (!media || !trip) return new Response("Not found", { status: 404 });
+    if (media.archived_at) return new Response("Not found", { status: 404 }); // archivált nem elérhető
+
+    const isOwner = !!viewerEmail && viewerEmail === trip.owner_user_id;
+    const isUploader = !!viewerEmail && viewerEmail === (media.uploader_user_id || "").toLowerCase();
+
+    // trip-láthatóság
+    if (trip.visibility === "private" && !isOwner) {
+      return new Response("Not found", { status: 404 });
+    }
+
+    // media-láthatóság
+    if (media.media_visibility === "private" && !(isOwner || isUploader)) {
+      return new Response("Not found", { status: 404 });
+    }
+
     if (!accessToken) return new Response("Unauthorized", { status: 401 });
 
-    const row = await findMediaRowById(id);
-    if (!row) return new Response("Not found", { status: 404 });
-
-    // Media oszloprend: id, trip_id, type, title, drive_file_id, mimeType, webViewLink, webContentLink, thumbnailLink, size, created_at, uploader_user_id, archived_at, category, media_visibility
-    const driveFileId = String(row[4] ?? "");
-    const mimeType = String(row[5] ?? "") || "application/octet-stream";
-
-    if (!driveFileId) return new Response("No drive_file_id", { status: 500 });
-
-    // Drive API: tartalom
-    const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
-      driveFileId
-    )}?alt=media`;
-
-    const r = await fetch(url, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-
+    // Drive letöltés
+    const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(media.drive_file_id)}?alt=media`;
+    const r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
     if (!r.ok) {
       const txt = await r.text().catch(() => "");
       return new Response(`Drive fetch error: ${r.status} ${txt}`, { status: 502 });
     }
 
-    // Proxyzzuk vissza az adatfolyamot
     const headers = new Headers();
-    headers.set("Content-Type", mimeType);
-    headers.set("Cache-Control", "public, max-age=3600, s-maxage=3600"); // óvatos cache
+    headers.set("Content-Type", media.mimeType || "application/octet-stream");
+    // cache: public lehet hosszabb; private legyen rövidebb
+    if (media.media_visibility === "public" && trip.visibility === "public") {
+      headers.set("Cache-Control", "public, max-age=3600, s-maxage=3600");
+    } else {
+      headers.set("Cache-Control", "no-store");
+    }
     return new Response(r.body, { status: 200, headers });
   } catch (e: any) {
     console.error("/api/media/file/[id] error:", e?.message || e);
