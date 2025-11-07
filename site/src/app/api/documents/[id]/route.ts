@@ -10,6 +10,10 @@ import { sheetsFindRowBy, sheetsUpdateRange, sheetsGet } from "@/lib/sheets";
 const DOCS_RANGE = "Documents!A2:M";
 const TRIPS_RANGE = "Trips!A2:I"; // 0 id | ... | 5 owner_user_id | 6 drive_folder_id | 8 visibility
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
+
 function nowISO() { return new Date().toISOString(); }
 
 async function getTripOwnerEmail(tripId: string): Promise<string | null> {
@@ -22,12 +26,14 @@ async function getTripOwnerEmail(tripId: string): Promise<string | null> {
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
     const session: any = await getServerSession(authOptions);
     const email = (session?.user?.email || "").toLowerCase();
     if (!email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    const { id } = await context.params;
 
     const body = await req.json().catch(() => ({}));
     const title = typeof body?.title === "string" ? body.title : undefined;
@@ -38,7 +44,7 @@ export async function PATCH(
       return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
     }
 
-    const { index, row } = await sheetsFindRowBy(DOCS_RANGE, (r) => (r?.[0] || "") === params.id);
+    const { index, row } = await sheetsFindRowBy(DOCS_RANGE, (r) => (r?.[0] || "") === id);
     if (index < 0 || !row) {
       return NextResponse.json({ error: "Document not found" }, { status: 404 });
     }
@@ -73,14 +79,16 @@ export async function PATCH(
 
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
     const session: any = await getServerSession(authOptions);
     const email = (session?.user?.email || "").toLowerCase();
     if (!email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const { index, row } = await sheetsFindRowBy(DOCS_RANGE, (r) => (r?.[0] || "") === params.id);
+    const { id } = await context.params;
+
+    const { index, row } = await sheetsFindRowBy(DOCS_RANGE, (r) => (r?.[0] || "") === id);
     if (index < 0 || !row) {
       return NextResponse.json({ error: "Document not found" }, { status: 404 });
     }
