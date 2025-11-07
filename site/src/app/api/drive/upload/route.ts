@@ -193,7 +193,7 @@ export async function POST(req: NextRequest) {
             email,                                // K uploader_user_id
             "",                                   // L archived_at
           ];
-          await sheetsAppend(PHOTOS_A1, [row]);
+          await sheetsAppend(PHOTOS_A1, row);
           results.push({ ok: true, kind: "photo", id: row[0], drive_file_id: uploaded.id });
         } else {
           const row = [
@@ -211,7 +211,7 @@ export async function POST(req: NextRequest) {
             "",                                   // L archived_at
             docVis,                               // M doc_visibility
           ];
-          await sheetsAppend(DOCS_A1, [row]);
+          await sheetsAppend(DOCS_A1, row);
           results.push({ ok: true, kind: "document", id: row[0], drive_file_id: uploaded.id });
         }
       } catch (e: any) {

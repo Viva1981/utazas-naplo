@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
       String(body?.payment_method || "card")// H payment_method
     ];
 
-    await sheetsAppend(EXPENSES_A1, [row]);
+    await sheetsAppend(EXPENSES_A1, row);
     return NextResponse.json({ ok: true, id }, { status: 200 });
   } catch (e: any) {
     console.error("/api/expenses/add error:", e?.message || e);
