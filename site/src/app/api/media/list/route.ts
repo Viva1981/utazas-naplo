@@ -10,6 +10,15 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 
+function isImageCategory(category?: string, mimeType?: string, title?: string) {
+  const cat = (category || "").toLowerCase();
+  const mt  = (mimeType || "").toLowerCase();
+  const t   = (title || "").toLowerCase();
+  if (cat === "image") return true;
+  if (mt.startsWith("image/")) return true;
+  return /\.(png|jpe?g|webp|gif|avif|heic|heif)$/i.test(t);
+}
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const tripId = (searchParams.get("trip_id") || "").trim();
@@ -23,7 +32,7 @@ export async function GET(req: Request) {
   } catch {}
 
   try {
-    // 1) Trip beolvasás és láthatóság
+    // 1) Trip és láthatóság
     const tRes = await sheetsGet(TRIPS_RANGE);
     const tRows = tRes.values ?? [];
     const tRow = tRows.find((r: any[]) => String(r?.[0] ?? "").trim() === tripId);
@@ -34,12 +43,12 @@ export async function GET(req: Request) {
     const tripVisibility = rawVis === "public" ? "public" : "private";
     const isOwner = !!viewerEmail && viewerEmail === ownerEmail;
 
-    // private trip → csak owner láthatja
+    // private trip → csak owner
     if (tripVisibility === "private" && !isOwner) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    // 2) Media beolvasás és szűrés
+    // 2) Media beolvasás
     const mRes = await sheetsGet(MEDIA_RANGE);
     const mRows = mRes.values ?? [];
 
@@ -65,14 +74,18 @@ export async function GET(req: Request) {
       }));
 
     if (isOwner) {
+      // owner lát mindent
       return NextResponse.json(all, { status: 200 });
     }
 
-    // uploader: a saját privátját is lássa
+    // NÁLATOK: csak owner tölthet fel -> uploader == owner,
+    // ezért elég a következő egyszerű szabály nem-ower nézőnek:
+    // - KÉP: mindig látható (Photos mindig public nálatok)
+    // - DOKSI: csak ha media_visibility === public
     const visible = all.filter((m) => {
-      if (m.media_visibility === "public") return true;
-      const uploader = (m.uploader_user_id || "").toLowerCase();
-      return !!viewerEmail && uploader === viewerEmail;
+      const img = isImageCategory(m.category, m.mimeType, m.title);
+      if (img) return true; // fotók: mindig látszanak public tripen
+      return m.media_visibility === "public"; // dokumentum: csak public
     });
 
     return NextResponse.json(visible, { status: 200 });
