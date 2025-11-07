@@ -29,16 +29,26 @@ async function getTripById(tripId: string) {
   };
 }
 
-async function googleJsonOrThrow(res: Response, hint: string) {
-  if (res.ok) return res.json();
-  const text = await res.text().catch(() => "");
-  throw new Error(`${hint} :: ${res.status} ${res.statusText} :: ${text}`);
+async function fetchFileMeta(accessToken: string, fileId: string) {
+  const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=thumbnailLink,webViewLink,mimeType,size`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!res.ok) return {};
+  try { return await res.json(); } catch { return {}; }
+}
+
+function bestThumb(uploaded: any, meta: any, fileId: string) {
+  return (
+    uploaded?.thumbnailLink ||
+    meta?.thumbnailLink ||
+    // stabil Google thumb endpoint:
+    `https://drive.google.com/thumbnail?id=${fileId}`
+  );
 }
 
 /**
  * Photos / Documents almappa biztosítása.
  * - Megkeresi a foldert a parent alatt; ha nincs, létrehozza.
- * - Ha valamiért nem sikerül ID-t visszakapni, fallback: parentId-t ad vissza,
+ * - Ha nem sikerül ID-t visszakapni, fallback: parentId,
  *   így legalább a Trip mappába megy a feltöltés (nem esik hasra az egész).
  */
 async function ensureSubfolder(
@@ -60,7 +70,6 @@ async function ensureSubfolder(
     const found = Array.isArray(data.files) ? data.files[0] : null;
     if (found?.id) return String(found.id);
   } else {
-    // nem kritikus – megyünk tovább a létrehozással
     console.warn("ensureSubfolder list failed:", await listRes.text().catch(()=>""));
   }
 
@@ -178,6 +187,10 @@ export async function POST(req: NextRequest) {
       try {
         const uploaded = await uploadToDriveMultipart(accessToken, targetParentId, file);
 
+        // thumbnail/meta fix
+        const meta = await fetchFileMeta(accessToken, uploaded.id);
+        const thumb = bestThumb(uploaded, meta, uploaded.id);
+
         if (subName === "Photos") {
           const row = [
             genId("PHOTO"),                       // A id
@@ -187,13 +200,13 @@ export async function POST(req: NextRequest) {
             file.type || "image/jpeg",            // E mimeType
             uploaded.webViewLink || "",           // F webViewLink
             `https://drive.google.com/uc?id=${uploaded.id}&export=download`, // G webContentLink
-            uploaded.thumbnailLink || "",         // H thumbnailLink
+            thumb,                                // H thumbnailLink
             String(file.size || ""),              // I size
             nowISO(),                             // J created_at
             email,                                // K uploader_user_id
             "",                                   // L archived_at
           ];
-          await sheetsAppend(PHOTOS_A1, row);
+          await sheetsAppend(PHOTOS_A1, row);     // LAPOS sor!
           results.push({ ok: true, kind: "photo", id: row[0], drive_file_id: uploaded.id });
         } else {
           const row = [
@@ -204,14 +217,14 @@ export async function POST(req: NextRequest) {
             file.type || "application/octet-stream", // E mimeType
             uploaded.webViewLink || "",           // F webViewLink
             `https://drive.google.com/uc?id=${uploaded.id}&export=download`, // G webContentLink
-            uploaded.thumbnailLink || "",         // H thumbnailLink
+            thumb,                                // H thumbnailLink
             String(file.size || ""),              // I size
             nowISO(),                             // J created_at
             email,                                // K uploader_user_id
             "",                                   // L archived_at
             docVis,                               // M doc_visibility
           ];
-          await sheetsAppend(DOCS_A1, row);
+          await sheetsAppend(DOCS_A1, row);       // LAPOS sor!
           results.push({ ok: true, kind: "document", id: row[0], drive_file_id: uploaded.id });
         }
       } catch (e: any) {
@@ -220,7 +233,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ha minden darab bukott, 500; ha vegyes, 207 Multi-Status helyett 200 + részletes eredmények
     const allFailed = results.length > 0 && results.every(r => !r.ok);
     return NextResponse.json({ ok: !allFailed, items: results }, { status: allFailed ? 500 : 200 });
 

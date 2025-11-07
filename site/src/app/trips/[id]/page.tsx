@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 
 type Trip = {
@@ -62,6 +62,7 @@ export default function Page() {
 
 function TripDetail({ id }: { id: string }) {
   const { data: sess } = useSession();
+  const router = useRouter();
 
   const [trip, setTrip] = useState<Trip | null>(null);
   const [photos, setPhotos] = useState<Photo[]>([]);
@@ -119,14 +120,16 @@ function TripDetail({ id }: { id: string }) {
     setMsgPhotos("Feltöltés…");
     const fd = new FormData(e.currentTarget);
     fd.set("tripId", id);
-    fd.set("category", "image");          // Photos
-    fd.set("sheet", "Photos");            // ide írunk
+    fd.set("category", "image");   // Photos
+    fd.set("sheet", "Photos");     // ide írunk
     const r = await fetch("/api/drive/upload", { method: "POST", body: fd, credentials: "include" });
     let j: any = null; try { j = await r.json(); } catch {}
     if (r.ok) {
       setMsgPhotos("Siker ✅");
-      e.currentTarget.reset();
+      (e.currentTarget as HTMLFormElement).reset();
       await refreshAll();
+      router.refresh();               // soft-reload
+      // window.location.reload();     // ha nagyon biztosra mennénk
     } else {
       setMsgPhotos("Hiba ❌ " + (j?.error || r.status));
     }
@@ -137,16 +140,17 @@ function TripDetail({ id }: { id: string }) {
     setMsgDocs("Feltöltés…");
     const fd = new FormData(e.currentTarget);
     fd.set("tripId", id);
-    fd.set("category", "document");       // Documents
-    fd.set("sheet", "Documents");         // ide írunk
-    // ha nincs megadva, default: private
+    fd.set("category", "document");  // Documents
+    fd.set("sheet", "Documents");    // ide írunk
     if (!fd.get("doc_visibility")) fd.set("doc_visibility", "private");
     const r = await fetch("/api/drive/upload", { method: "POST", body: fd, credentials: "include" });
     let j: any = null; try { j = await r.json(); } catch {}
     if (r.ok) {
       setMsgDocs("Siker ✅");
-      e.currentTarget.reset();
+      (e.currentTarget as HTMLFormElement).reset();
       await refreshAll();
+      router.refresh();               // soft-reload
+      // window.location.reload();
     } else {
       setMsgDocs("Hiba ❌ " + (j?.error || r.status));
     }
@@ -176,6 +180,7 @@ function TripDetail({ id }: { id: string }) {
       setMsgExp("Siker ✅");
       (e.currentTarget as HTMLFormElement).reset();
       await refreshAll();
+      router.refresh();
     } else {
       setMsgExp("Hiba ❌ " + (j?.error || r.status));
     }
