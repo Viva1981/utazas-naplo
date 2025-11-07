@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 
@@ -55,6 +55,85 @@ function niceDate(d?: string) {
   return `${Y}.${M}.${D}`;
 }
 
+// --------- Modal néző (lightbox) ----------
+function buildInlineUrl(mime: string | undefined, driveId: string) {
+  const id = encodeURIComponent(driveId);
+  if (mime?.startsWith("image/")) return `https://drive.google.com/uc?export=view&id=${id}`;
+  if (mime === "application/pdf") return `https://drive.google.com/file/d/${id}/preview`;
+  return `https://drive.google.com/file/d/${id}/view`;
+}
+
+function ViewerModal({
+  open,
+  onClose,
+  title,
+  driveId,
+  mime,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title?: string;
+  driveId: string;
+  mime?: string;
+}) {
+  if (!open) return null;
+  const inlineUrl = buildInlineUrl(mime, driveId);
+  const externalUrl = mime?.startsWith("image/")
+    ? `https://drive.google.com/uc?export=download&id=${encodeURIComponent(driveId)}`
+    : `https://drive.google.com/file/d/${encodeURIComponent(driveId)}/view`;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-3"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        className="bg-white max-w-5xl w-full rounded-xl shadow-2xl overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-3 py-2 flex items-center justify-between border-b">
+          <div className="font-medium truncate">{title || (mime?.startsWith("image/") ? "Kép" : "Dokumentum")}</div>
+          <div className="flex items-center gap-2">
+            <a
+              href={externalUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-sm px-3 py-1 border rounded-md hover:bg-gray-50"
+            >
+              Megnyitás Drive-ban
+            </a>
+            <button onClick={onClose} className="text-sm px-3 py-1 border rounded-md hover:bg-gray-50">
+              Bezárás
+            </button>
+          </div>
+        </div>
+        <div className="bg-black/5">
+          {mime?.startsWith("image/") ? (
+            <div className="w-full grid place-items-center">
+              <img
+                src={inlineUrl}
+                alt={title || "Kép"}
+                className="max-h-[85vh] w-auto object-contain"
+                style={{ display: "block" }}
+              />
+            </div>
+          ) : (
+            <iframe
+              src={inlineUrl}
+              title={title || "Dokumentum"}
+              className="w-full"
+              style={{ height: "85vh", border: "0" }}
+              allow="autoplay; fullscreen"
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Page() {
   const { id } = useParams<{ id: string }>();
   return <TripDetail key={id} id={String(id)} />;
@@ -86,6 +165,14 @@ function TripDetail({ id }: { id: string }) {
   // trip edit
   const [editTripMode, setEditTripMode] = useState(false);
   const [tripForm, setTripForm] = useState<Partial<Trip>>({});
+
+  // viewer
+  const [viewer, setViewer] = useState<{
+    type: "photo" | "doc";
+    driveId: string;
+    mime?: string;
+    title?: string;
+  } | null>(null);
 
   async function refreshAll() {
     const [pRes, dRes, eRes] = await Promise.all([
@@ -270,9 +357,7 @@ function TripDetail({ id }: { id: string }) {
   }
 
   // ======== TRIP EDIT ========
-  function beginTripEdit() {
-    setEditTripMode(true);
-  }
+  function beginTripEdit() { setEditTripMode(true); }
   function cancelTripEdit() {
     if (trip) {
       setTripForm({
@@ -301,7 +386,6 @@ function TripDetail({ id }: { id: string }) {
     });
     if (r.ok) {
       setEditTripMode(false);
-      // frissítjük a fejléc adatokat
       const r2 = await fetch(`/api/trips/get/${id}`, { cache: "no-store" });
       if (r2.ok) {
         const t: Trip = await r2.json().catch(() => null as any);
@@ -368,10 +452,7 @@ function TripDetail({ id }: { id: string }) {
                 )}
               </div>
               {isOwner && (
-                <button
-                  onClick={beginTripEdit}
-                  className="h-9 px-3 border rounded-md hover:bg-gray-50"
-                >
+                <button onClick={beginTripEdit} className="h-9 px-3 border rounded-md hover:bg-gray-50">
                   Szerkesztés
                 </button>
               )}
@@ -462,6 +543,7 @@ function TripDetail({ id }: { id: string }) {
             closeEdit={closeEdit}
             savePhotoTitle={savePhotoTitle}
             deletePhoto={deletePhoto}
+            onOpenViewer={(p: Photo) => setViewer({ type: "photo", driveId: p.drive_file_id, mime: p.mimeType, title: p.title })}
           />
         )}
       </section>
@@ -501,6 +583,7 @@ function TripDetail({ id }: { id: string }) {
             saveDocTitle={saveDocTitle}
             toggleDocVisibility={toggleDocVisibility}
             deleteDoc={deleteDoc}
+            onOpenViewer={(d: DocumentItem) => setViewer({ type: "doc", driveId: d.drive_file_id, mime: d.mimeType, title: d.title })}
           />
         )}
       </section>
@@ -522,16 +605,26 @@ function TripDetail({ id }: { id: string }) {
         saveExpense={saveExpense}
         deleteExpense={deleteExpense}
       />
+
+      {/* Lightbox / Modal */}
+      <ViewerModal
+        open={!!viewer}
+        onClose={() => setViewer(null)}
+        title={viewer?.title}
+        driveId={viewer?.driveId || ""}
+        mime={viewer?.mime}
+      />
     </main>
   );
 }
 
-/* ==== Kisegítő al-komponensek a kód olvashatóságáért ==== */
+/* ==== Kisegítő al-komponensek ==== */
 function MediaPhotoGrid(props: any) {
   const {
     items, isOwner, openMenuId, setOpenMenuId,
     editTitleId, editTitleValue, setEditTitleValue,
     openEdit, closeEdit, savePhotoTitle, deletePhoto,
+    onOpenViewer,
   } = props;
 
   const KebabBtn = ({ onClick }: { onClick: () => void }) => (
@@ -552,11 +645,16 @@ function MediaPhotoGrid(props: any) {
     <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))" }}>
       {items.map((m: any) => {
         const thumb = `/api/photos/thumb/${encodeURIComponent(m.id)}`;
-        const full = `/api/photos/file/${encodeURIComponent(m.id)}`;
         const isEditing = editTitleId === m.id;
         return (
           <div key={m.id} className="relative rounded overflow-hidden border bg-gray-50 hover:shadow transition">
-            <a href={full} target="_blank" rel="noreferrer" className="block">
+            {/* bélyegkép → modal */}
+            <button
+              type="button"
+              onClick={() => onOpenViewer(m)}
+              className="block w-full"
+              title={m.title || "Kép megnyitása"}
+            >
               <img
                 src={thumb}
                 alt={m.title || "kép"}
@@ -570,7 +668,7 @@ function MediaPhotoGrid(props: any) {
                   }
                 }}
               />
-            </a>
+            </button>
 
             <div className="p-2 border-t bg-white flex items-center gap-2">
               {isEditing ? (
@@ -607,6 +705,7 @@ function MediaDocGrid(props: any) {
     items, isOwner, openMenuId, setOpenMenuId,
     editTitleId, editTitleValue, setEditTitleValue,
     openEdit, closeEdit, saveDocTitle, toggleDocVisibility, deleteDoc,
+    onOpenViewer,
   } = props;
 
   const KebabBtn = ({ onClick }: { onClick: () => void }) => (
@@ -627,27 +726,31 @@ function MediaDocGrid(props: any) {
     <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>
       {items.map((d: any) => {
         const thumb = `/api/documents/thumb/${encodeURIComponent(d.id)}`;
-        const full = `/api/documents/file/${encodeURIComponent(d.id)}`;
         const isEditing = editTitleId === d.id;
 
         return (
           <article key={d.id} className="relative border rounded-lg overflow-hidden bg-white shadow-sm">
-            <a href={full} target="_blank" rel="noreferrer">
-              <div className="bg-gray-100" style={{ aspectRatio: "4/3" }}>
-                <img
-                  src={thumb}
-                  alt={d.title || "Előnézet"}
-                  className="w-full h-full object-contain"
-                  onError={(ev) => {
-                    const img = ev.currentTarget as HTMLImageElement;
-                    if (!(img as any).dataset.fallback) {
-                      (img as any).dataset.fallback = "1";
-                      img.src = `https://drive.google.com/uc?export=view&id=${d.drive_file_id}`;
-                    }
-                  }}
-                />
-              </div>
-            </a>
+            {/* bélyegkép → modal */}
+            <button
+              type="button"
+              onClick={() => onOpenViewer(d)}
+              className="w-full bg-gray-100"
+              style={{ aspectRatio: "4/3" }}
+              title={d.title || "Dokumentum megnyitása"}
+            >
+              <img
+                src={thumb}
+                alt={d.title || "Előnézet"}
+                className="w-full h-full object-contain"
+                onError={(ev) => {
+                  const img = ev.currentTarget as HTMLImageElement;
+                  if (!(img as any).dataset.fallback) {
+                    (img as any).dataset.fallback = "1";
+                    img.src = `https://drive.google.com/uc?export=view&id=${d.drive_file_id}`;
+                  }
+                }}
+              />
+            </button>
 
             <div className="p-3 border-t bg-white">
               {isEditing ? (
@@ -718,9 +821,7 @@ function ExpensesSection(props: any) {
     if (r.ok) {
       setMsgExp("Siker ✅");
       (e.currentTarget as HTMLFormElement).reset();
-      // újratöltés a szokásos módon
-      await fetch(`/api/expenses/list?trip_id=${id}`, { cache: "no-store" }).then(r=>r.json()).then((arr)=>{});
-      location.reload(); // legbiztosabb
+      location.reload(); // legegyszerűbb, stabil frissítés
     } else {
       setMsgExp("Hiba ❌ " + (j?.error || r.status));
     }
@@ -776,6 +877,7 @@ function ExpensesSection(props: any) {
                 </>
               )}
 
+              {/* kebab */}
               {isOwner && !isEditing && (
                 <>
                   <button
