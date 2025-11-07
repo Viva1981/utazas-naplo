@@ -1,90 +1,30 @@
-import { NextRequest } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
-import { sheetsGet } from "@/lib/sheets";
+import { NextResponse, NextRequest } from "next/server";
+import { sheetsFindRowBy } from "@/lib/sheets";
 
-const TRIPS_RANGE = "Trips!A2:I";
+// Photos: 0 id | 1 trip_id | 2 title | 3 drive_file_id | 4 mimeType
+// 5 webViewLink | 6 webContentLink | 7 thumbnailLink | 8 size | 9 created_at | 10 uploader | 11 archived_at
 const PHOTOS_RANGE = "Photos!A2:L";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 
-async function loadByPhotoId(mediaId: string) {
-  const pRes = await sheetsGet(PHOTOS_RANGE);
-  const pRows = pRes.values ?? [];
-  const r = pRows.find((x: any[]) => String(x?.[0] ?? "").trim() === mediaId);
-  if (!r) return { trip: null as any, photo: null as any };
-
-  const photo = {
-    id: String(r?.[0] ?? ""),
-    trip_id: String(r?.[1] ?? ""),
-    title: String(r?.[2] ?? ""),
-    drive_file_id: String(r?.[3] ?? ""),
-    mimeType: String(r?.[4] ?? ""),
-    thumbnailLink: String(r?.[7] ?? ""),
-    uploader_user_id: String(r?.[10] ?? ""),
-    archived_at: String(r?.[11] ?? ""),
-  };
-
-  const tRes = await sheetsGet(TRIPS_RANGE);
-  const tRows = tRes.values ?? [];
-  const t = tRows.find((x: any[]) => String(x?.[0] ?? "").trim() === photo.trip_id);
-  if (!t) return { trip: null as any, photo };
-
-  const trip = {
-    id: String(t?.[0] ?? ""),
-    owner_user_id: String(t?.[5] ?? "").toLowerCase(),
-    visibility: (String(t?.[8] ?? "").trim().toLowerCase() === "public" ? "public" : "private") as "public" | "private",
-  };
-
-  return { trip, photo };
-}
-
 export async function GET(
   _req: NextRequest,
-  ctx: { params: Promise<{ id?: string }> }
+  ctx: { params: Promise<{ id: string }> }
 ) {
-  try {
-    const p = await ctx.params;
-    const id = (p?.id ?? "").trim();
-    if (!id) return new Response("Missing id", { status: 400 });
+  const { id } = await ctx.params;
+  const { row } = await sheetsFindRowBy(PHOTOS_RANGE, r => (r?.[0] || "") === id);
+  if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (String(row[11] || "")) return NextResponse.json({ error: "Archived" }, { status: 410 });
 
-    const session: any = await getServerSession(authOptions);
-    const viewerEmail = (session?.user?.email || "").toLowerCase();
-    const accessToken: string = session?.accessToken || "";
+  // próbáljuk a webContentLink-et; ha nincs, fallback az uc?id=... linkre
+  const webContent = String(row[6] || "");
+  const driveId = String(row[3] || "");
+  const fallback = driveId ? `https://drive.google.com/uc?id=${encodeURIComponent(driveId)}&export=download` : "";
+  const url = webContent || fallback;
+  if (!url) return NextResponse.json({ error: "No link" }, { status: 404 });
 
-    const { trip, photo } = await loadByPhotoId(id);
-    if (!photo || !trip) return new Response("Not found", { status: 404 });
-    if (photo.archived_at) return new Response("Not found", { status: 404 });
-
-    const isOwner = !!viewerEmail && viewerEmail === trip.owner_user_id;
-
-    // private trip → csak owner
-    if (trip.visibility === "private" && !isOwner) {
-      return new Response("Not found", { status: 404 });
-    }
-
-    if (!accessToken) return new Response("Unauthorized", { status: 401 });
-
-    const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(photo.drive_file_id)}?alt=media`;
-    const r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
-    if (!r.ok) {
-      const txt = await r.text().catch(() => "");
-      return new Response(`Drive fetch error: ${r.status} ${txt}`, { status: 502 });
-    }
-
-    const headers = new Headers();
-    headers.set("Content-Type", photo.mimeType || "image/jpeg");
-    // public trip → cache-elhető; private → no-store
-    if (trip.visibility === "public") {
-      headers.set("Cache-Control", "public, max-age=3600, s-maxage=3600");
-    } else {
-      headers.set("Cache-Control", "no-store");
-    }
-    return new Response(r.body, { status: 200, headers });
-  } catch (e: any) {
-    console.error("/api/photos/file/[id] error:", e?.message || e);
-    return new Response("Internal error", { status: 500 });
-  }
+  // 302 redirect – a böngésző közvetlenül a Drive-ból tölti
+  return NextResponse.redirect(url);
 }
