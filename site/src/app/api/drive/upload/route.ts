@@ -1,292 +1,196 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { sheetsGet, sheetsAppend, sheetsUpdateRange } from "@/lib/sheets";
-import {
-  driveUploadFile,
-  driveGetFileMeta,
-  driveCreateFolder,
-  driveSetAnyoneReader,
-  driveEnsureParent,
-} from "@/lib/drive";
+import { sheetsAppend, sheetsGet } from "@/lib/sheets";
 
-const MEDIA_RANGE = "Media!A2:O";
-const TRIPS_RANGE = "Trips!A2:I";   // 0:id | 1:title | ... | 5:owner email | 6:folderId | 7:folderLink | 8:visibility
-const USERS_RANGE = "Users!A2:D";
+const TRIPS_RANGE = "Trips!A2:I"; // trip lookup
+const PHOTOS_SHEET_A1 = "Photos!A1";
+const DOCS_SHEET_A1   = "Documents!A1";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
-// --- MIME & MÉRET LIMIT-EK ---
-const ALLOWED_IMAGE_MIME = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/gif",
-]);
-
-const ALLOWED_DOC_MIME = new Set([
-  "application/pdf",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
-]);
-
-const MAX_IMAGE_BYTES =
-  (parseInt(process.env.MAX_IMAGE_MB || "20", 10) || 20) * 1024 * 1024; // 20 MB
-const MAX_DOC_BYTES =
-  (parseInt(process.env.MAX_DOC_MB || "50", 10) || 50) * 1024 * 1024; // 50 MB
-// --- /MIME & MÉRET LIMIT-EK ---
-
-async function ensureUserFolder(accessToken: string, userId: string, userName: string, rootFolderId: string) {
-  const usersRes = await sheetsGet(USERS_RANGE);
-  const rows: string[][] = usersRes.values ?? [];
-
-  let rowIndex = -1;
-  let folderId = "";
-  let folderLink = "";
-
-  for (let i = 0; i < rows.length; i++) {
-    const r = rows[i];
-    if ((r[0] || "").toLowerCase() === userId.toLowerCase()) {
-      rowIndex = i;
-      // támogatjuk az eltérő oszlopsorrendet is
-      folderId = r[3] ? r[3] : r[2] || "";
-      folderLink = r[4] ? r[4] : r[3] || "";
-      break;
-    }
-  }
-
-  if (rowIndex === -1) {
-    const created = await driveCreateFolder(accessToken, userName || userId, rootFolderId);
-    folderId = created.id;
-    folderLink = created.webViewLink || "";
-    await sheetsAppend(USERS_RANGE, [userId, userId, userName || "", folderId, folderLink]);
-    return { folderId, folderLink };
-  }
-
-  if (!folderId) {
-    const created = await driveCreateFolder(accessToken, userName || userId, rootFolderId);
-    folderId = created.id;
-    folderLink = created.webViewLink || "";
-    const rowNumber = rowIndex + 2;
-    await sheetsUpdateRange(`Users!C${rowNumber}:D${rowNumber}`, [[folderId, folderLink]]);
-  }
-
-  return { folderId, folderLink };
+// Helper: olvasd ki a tripet a Sheets-ből
+async function getTripById(tripId: string) {
+  const { values } = await sheetsGet(TRIPS_RANGE);
+  const rows = values ?? [];
+  const r = rows.find((x: any[]) => String(x?.[0] ?? "").trim() === tripId);
+  if (!r) return null;
+  return {
+    id: String(r[0] ?? ""),
+    drive_folder_id: String(r[6] ?? ""),
+    owner_user_id: String(r[5] ?? ""),
+    visibility: (String(r[8] ?? "").trim().toLowerCase() === "public" ? "public" : "private") as "public"|"private",
+  };
 }
 
-async function ensureTripFolder(accessToken: string, tripId: string, tripTitle: string, userFolderId: string) {
-  const tripsRes = await sheetsGet(TRIPS_RANGE);
-  const rows: string[][] = tripsRes.values ?? [];
+// Helper: almappa azonosító (Photos/Documents) – ha nincs, létrehozzuk
+async function ensureSubfolder(accessToken: string, parentId: string, name: "Photos" | "Documents") {
+  // Próbáljuk megkeresni
+  const q = encodeURIComponent(`name='${name}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`);
+  const listUrl = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`;
+  const listRes = await fetch(listUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+  const listJson = listRes.ok ? await listRes.json().catch(() => ({})) : {};
+  const found = Array.isArray(listJson.files) ? listJson.files[0] : null;
+  if (found?.id) return found.id;
 
-  let rowIndex = -1;
-  let folderId = "";
-  let folderLink = "";
-
-  for (let i = 0; i < rows.length; i++) {
-    const r = rows[i];
-    if (r[0] === tripId) {
-      rowIndex = i;
-      folderId = r[6] || "";
-      folderLink = r[7] || "";
-      break;
-    }
-  }
-
-  if (rowIndex === -1) throw new Error(`Trip not found: ${tripId}`);
-
-  if (!folderId) {
-    const created = await driveCreateFolder(accessToken, tripTitle ? `${tripTitle} [${tripId}]` : `trip_${tripId}`, userFolderId);
-    folderId = created.id;
-    folderLink = created.webViewLink || "";
-
-    try { await driveEnsureParent(accessToken, folderId, userFolderId); } catch (e) { console.warn("ensureParent(create)", e); }
-
-    const rowNumber = rowIndex + 2;
-    await sheetsUpdateRange(`Trips!G${rowNumber}:H${rowNumber}`, [[folderId, folderLink]]);
-  } else {
-    try { await driveEnsureParent(accessToken, folderId, userFolderId); } catch (e) { console.warn("ensureParent(existing)", e); }
-  }
-
-  return { folderId, folderLink };
+  // Létrehozás
+  const meta = {
+    name,
+    mimeType: "application/vnd.google-apps.folder",
+    parents: [parentId],
+  };
+  const createRes = await fetch("https://www.googleapis.com/drive/v3/files", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(meta),
+  });
+  const createJson = createRes.ok ? await createRes.json().catch(() => ({})) : {};
+  return createJson.id as string;
 }
 
-export async function POST(req: Request) {
-  const session = await getServerSession(authOptions);
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+// Helper: fájl feltöltése Drive-ra (multipart)
+async function uploadToDriveMultipart(
+  accessToken: string,
+  parentId: string,
+  file: File
+) {
+  const metadata = {
+    name: file.name,
+    parents: [parentId],
+  };
 
-  const accessToken =
-    (session as any).accessToken ||
-    (session as any)?.user?.accessToken ||
-    (session as any)?.user?.token ||
-    null;
+  const boundary = "BOUNDARY-" + Math.random().toString(36).slice(2);
+  const encoder = new TextEncoder();
 
-  if (!accessToken) return NextResponse.json({ error: "Missing OAuth access token in session." }, { status: 401 });
+  const metaPart = encoder.encode(
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`
+  );
 
-  const uploaderUserId =
-    ((session as any)?.userId as string | undefined) ||
-    ((session?.user as any)?.email as string | undefined) ||
-    "";
-  const uploaderName = ((session?.user as any)?.name as string | undefined) || uploaderUserId.split("@")[0];
+  const fileArrayBuffer = await file.arrayBuffer();
+  const filePartHeader = encoder.encode(
+    `--${boundary}\r\nContent-Type: ${file.type || "application/octet-stream"}\r\n\r\n`
+  );
+  const endPart = encoder.encode(`\r\n--${boundary}--`);
+  const body = new Blob([metaPart, filePartHeader, new Uint8Array(fileArrayBuffer), endPart]);
 
-  const form = await req.formData();
-  const tripId = String(form.get("tripId") || form.get("trip_id") || "");
-  if (!tripId) return NextResponse.json({ error: "Missing tripId" }, { status: 400 });
+  const res = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink,thumbnailLink", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": `multipart/related; boundary=${boundary}`,
+    },
+    body,
+  });
 
-  const files = form.getAll("file").filter(Boolean) as File[];
-  if (!files.length) return NextResponse.json({ error: "Missing file" }, { status: 400 });
-
-  const titleFromForm = (form.get("title") as string) || "";
-  const explicitCategory = ((form.get("category") as string) || "").toLowerCase(); // "image" | "document" | ""
-  const explicitVisibility = ((form.get("media_visibility") as string) || "").toLowerCase();
-
-  const rootFolderId = process.env.DRIVE_UPLOAD_FOLDER_ID || process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID || "";
-  if (!rootFolderId) {
-    return NextResponse.json({ error: "Hiányzik a DRIVE_UPLOAD_FOLDER_ID (vagy GOOGLE_DRIVE_ROOT_FOLDER_ID) ENV." }, { status: 500 });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`Drive upload error: ${res.status} ${txt}`);
   }
+  return res.json() as Promise<{ id: string; webViewLink?: string; thumbnailLink?: string }>;
+}
 
-  // ---- Trip beolvasása + TULAJDONOS-ELLENŐRZÉS ----
-  const tripsRes = await sheetsGet(TRIPS_RANGE);
-  const tripRows: string[][] = tripsRes.values ?? [];
-  let tripTitle = "";
-  let tripOwnerEmail = "";
+// Helper: mostani idő ISO
+const nowISO = () => new Date().toISOString();
 
-  for (const r of tripRows) {
-    if (r[0] === tripId) {
-      tripTitle = r[1] || "";
-      tripOwnerEmail = (r[5] || "").toLowerCase(); // 6. oszlop: owner e-mail
-      break;
+// Helper: ID generálás
+function genId(prefix: string) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const session: any = await getServerSession(authOptions);
+    const accessToken: string = session?.accessToken || "";
+    const uploaderEmail: string = (session?.user?.email || "").toLowerCase();
+    if (!accessToken || !uploaderEmail) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-  }
 
-  if (!tripTitle) {
-    return NextResponse.json({ error: `Trip not found: ${tripId}` }, { status: 404 });
-  }
+    const form = await req.formData();
+    const tripId = String(form.get("tripId") || "").trim();
+    const category = String(form.get("category") || "").trim().toLowerCase(); // "image" | "document"
+    // opcionális: Photos/Documents explicit jelölés
+    const sheetHint = String(form.get("sheet") || "").trim();
+    const docVisibility = String(form.get("doc_visibility") || "private").toLowerCase(); // only for Documents
+    const title = String(form.get("title") || "");
 
-  // *** CSAK A TULAJ TÖLTHET FEL ***
-  if (!tripOwnerEmail || tripOwnerEmail !== uploaderUserId.toLowerCase()) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-  // ---- /TULAJDONOS-ELLENŐRZÉS ----
+    if (!tripId) return NextResponse.json({ error: "Missing tripId" }, { status: 400 });
+    if (!["image", "document"].includes(category)) {
+      return NextResponse.json({ error: "Invalid category" }, { status: 400 });
+    }
 
-  // ---- MIME & MÉRET VALIDÁLÁS (feltöltés ELŐTT) ----
-  for (const file of files) {
-    const clientMime = (file.type || "").toLowerCase();
-    const size = typeof (file as any).size === "number" ? (file as any).size : undefined;
+    // Trip mappa
+    const trip = await getTripById(tripId);
+    if (!trip) return NextResponse.json({ error: "Trip not found" }, { status: 404 });
 
-    // A felhasználó szándéka: form szerinti kategória élvez elsőbbséget:
-    // - ha explicitCategory === "document": képet is elfogadunk dokumentumként
-    // - különben: MIME/kiterjesztés alapján döntünk
-    const intendedCategory: "image" | "document" =
-      explicitCategory === "image" || explicitCategory === "document"
-        ? (explicitCategory as any)
-        : (clientMime.startsWith("image/") ? "image" : "document");
+    // Csak owner tölthessen fel az adott tripbe (ahogy megbeszéltük)
+    if (uploaderEmail !== trip.owner_user_id.toLowerCase()) {
+      return NextResponse.json({ error: "Not allowed" }, { status: 403 });
+    }
 
-    if (intendedCategory === "image") {
-      // Kép: csak az engedélyezett image MIME-ok, kép méretlimittel
-      if (!ALLOWED_IMAGE_MIME.has(clientMime)) {
-        return NextResponse.json(
-          { error: `Tiltott kép típus: ${clientMime || "ismeretlen"}. Engedélyezett: ${Array.from(ALLOWED_IMAGE_MIME).join(", ")}` },
-          { status: 415 }
-        );
-      }
-      if (size !== undefined && size > MAX_IMAGE_BYTES) {
-        return NextResponse.json(
-          { error: `Túl nagy kép: ${(size / (1024 * 1024)).toFixed(1)} MB. Limit: ${MAX_IMAGE_BYTES / (1024 * 1024)} MB` },
-          { status: 413 }
-        );
-      }
-    } else {
-      // Dokumentum: ha valójában image/*, azt is elfogadjuk (Dokumentumok űrlap esetén)
-      if (clientMime.startsWith("image/")) {
-        if (!ALLOWED_IMAGE_MIME.has(clientMime)) {
-          return NextResponse.json(
-            { error: `Tiltott dokumentum (kép) típus: ${clientMime}. Engedélyezett képek: ${Array.from(ALLOWED_IMAGE_MIME).join(", ")}` },
-            { status: 415 }
-          );
-        }
-        if (size !== undefined && size > MAX_IMAGE_BYTES) {
-          return NextResponse.json(
-            { error: `Túl nagy dokumentum (kép): ${(size / (1024 * 1024)).toFixed(1)} MB. Limit: ${MAX_IMAGE_BYTES / (1024 * 1024)} MB` },
-            { status: 413 }
-          );
-        }
+    // Almappa: Photos / Documents
+    const subName: "Photos" | "Documents" = category === "image" ? "Photos" : "Documents";
+    const parentId = trip.drive_folder_id;
+    const targetFolderId = parentId ? await ensureSubfolder(accessToken, parentId, subName) : parentId;
+
+    // Fájlok
+    const files = form.getAll("file").filter((v) => v instanceof File) as File[];
+    if (files.length === 0) {
+      return NextResponse.json({ error: "No files" }, { status: 400 });
+    }
+
+    const results: any[] = [];
+    for (const file of files) {
+      const uploaded = await uploadToDriveMultipart(accessToken, targetFolderId || parentId, file);
+
+      if (category === "image" || sheetHint === "Photos") {
+        // Photos sheet: id..archived_at (A..L)
+        const row = [
+          genId("PHOTO"),                   // A id
+          tripId,                           // B trip_id
+          title || file.name,               // C title
+          uploaded.id,                      // D drive_file_id
+          file.type || "image/jpeg",        // E mimeType
+          uploaded.webViewLink || "",       // F webViewLink
+          `https://drive.google.com/uc?id=${uploaded.id}&export=download`, // G webContentLink
+          uploaded.thumbnailLink || "",     // H thumbnailLink
+          String(file.size || ""),          // I size
+          nowISO(),                         // J created_at
+          uploaderEmail,                    // K uploader_user_id
+          "",                               // L archived_at
+        ];
+        await sheetsAppend(PHOTOS_SHEET_A1, [row]);
+        results.push({ kind: "photo", id: row[0], drive_file_id: uploaded.id });
       } else {
-        // Nem kép: klasszikus dokumentum MIME-ok
-        if (!ALLOWED_DOC_MIME.has(clientMime)) {
-          return NextResponse.json(
-            { error: `Tiltott dokumentum típus: ${clientMime || "ismeretlen"}. Engedélyezett: ${Array.from(ALLOWED_DOC_MIME).join(", ")}` },
-            { status: 415 }
-          );
-        }
-        if (size !== undefined && size > MAX_DOC_BYTES) {
-          return NextResponse.json(
-            { error: `Túl nagy dokumentum: ${(size / (1024 * 1024)).toFixed(1)} MB. Limit: ${MAX_DOC_BYTES / (1024 * 1024)} MB` },
-            { status: 413 }
-          );
-        }
+        // Documents sheet: id..doc_visibility (A..M)
+        const row = [
+          genId("DOC"),                     // A id
+          tripId,                           // B trip_id
+          title || file.name,               // C title
+          uploaded.id,                      // D drive_file_id
+          file.type || "application/octet-stream", // E mimeType
+          uploaded.webViewLink || "",       // F webViewLink
+          `https://drive.google.com/uc?id=${uploaded.id}&export=download`, // G webContentLink
+          uploaded.thumbnailLink || "",     // H thumbnailLink
+          String(file.size || ""),          // I size
+          nowISO(),                         // J created_at
+          uploaderEmail,                    // K uploader_user_id
+          "",                               // L archived_at
+          docVisibility === "public" ? "public" : "private", // M doc_visibility
+        ];
+        await sheetsAppend(DOCS_SHEET_A1, [row]);
+        results.push({ kind: "document", id: row[0], drive_file_id: uploaded.id });
       }
     }
+
+    return NextResponse.json({ ok: true, items: results }, { status: 200 });
+  } catch (e: any) {
+    console.error("/api/drive/upload error:", e?.message || e);
+    return NextResponse.json({ error: "Upload error" }, { status: 500 });
   }
-  // ---- /MIME & MÉRET VALIDÁLÁS ----
-
-  // User mappa → Trip mappa (kényszerített szülővel)
-  const { folderId: userFolderId } = await ensureUserFolder(accessToken, uploaderUserId.toLowerCase(), uploaderName, rootFolderId);
-  const { folderId: tripFolderId } = await ensureTripFolder(accessToken, tripId, tripTitle, userFolderId);
-
-  // 3-image/trip limit (csak az image kategóriát számoljuk)
-  const mediaRes = await sheetsGet(MEDIA_RANGE);
-  const mediaRows: string[][] = mediaRes.values ?? [];
-  const existingImagesCount = mediaRows.filter((r) => r[1] === tripId && !r[12] && (r[13] || "").toLowerCase() === "image").length;
-  const selectedImageCount = files.filter((f) =>
-    (explicitCategory ? explicitCategory === "image" : (f.type || "").toLowerCase().startsWith("image/"))
-  ).length;
-  if (existingImagesCount + selectedImageCount > 3) {
-    const remaining = Math.max(0, 3 - existingImagesCount);
-    return NextResponse.json({ error: `A képek száma elérné a limitet (3/trip). Már van ${existingImagesCount}, most ${selectedImageCount}-et jelöltél ki. Még ${remaining} tölthető.` }, { status: 422 });
-  }
-
-  // Upload + (publicnál) anyone-reader + Media sor
-  const nowIso = new Date().toISOString();
-  const results: any[] = [];
-
-  for (const file of files) {
-    const clientMime = (file.type || "").toLowerCase();
-
-    // Végleges kategória: a form kérése élvez elsőbbséget
-    const intendedCategory: "image" | "document" =
-      explicitCategory === "image" || explicitCategory === "document"
-        ? (explicitCategory as any)
-        : (clientMime.startsWith("image/") ? "image" : "document");
-
-    const media_visibility = (explicitVisibility || (intendedCategory === "document" ? "private" : "public")) as "public" | "private";
-
-    const uploaded = await driveUploadFile(accessToken, file, titleFromForm || (file as any).name, tripFolderId);
-
-    if (media_visibility === "public") {
-      try { await driveSetAnyoneReader(accessToken, uploaded.id); } catch (e) { console.warn("Drive public perm fail:", e); }
-    }
-
-    const meta = await driveGetFileMeta(accessToken, uploaded.id);
-
-    const id = `${tripId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const row: string[] = [
-      id, tripId, "file",
-      titleFromForm || meta.name || (file as any).name || "",
-      uploaded.id,
-      meta.mimeType || clientMime || "",
-      meta.webViewLink || "",
-      meta.webContentLink || "",
-      meta.thumbnailLink || "",
-      String(meta.size ?? (file as any).size ?? ""),
-      nowIso,
-      uploaderUserId,
-      "",
-      intendedCategory,           // << itt mindig a SZÁNDÉK SZERINTI kategória
-      media_visibility,
-    ];
-    await sheetsAppend(MEDIA_RANGE, row);
-
-    results.push({ id, drive_file_id: uploaded.id, title: row[3], mimeType: row[5], category: intendedCategory, media_visibility });
-  }
-
-  return NextResponse.json({ ok: true, items: results });
 }

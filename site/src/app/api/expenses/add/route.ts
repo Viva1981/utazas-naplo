@@ -1,68 +1,58 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { sheetsAppend, sheetsFindRowBy } from "@/lib/sheets";
+import { sheetsAppend, sheetsGet } from "@/lib/sheets";
 
-// Trips:  id | title | start_date | end_date | destination | owner_user_id | drive_folder_id | drive_folder_link
-const TRIPS_RANGE = "Trips!A2:H";
-// Expenses: id | trip_id | date | category | description | amount | currency | payment_method | created_at
-const EXPENSES_HEADER_RANGE = "Expenses!A1:I1";
+const TRIPS_RANGE     = "Trips!A2:I";
+const EXPENSES_A1     = "Expenses!A1";
 
-export async function POST(req: Request) {
-  const session = await getServerSession(authOptions);
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
-  const body = await req.json().catch(() => ({} as any));
-  const {
-    trip_id = "",
-    date = "",
-    category = "other",
-    description = "",
-    amount = 0,
-    currency = "HUF",
-    payment_method = "card",
-  } = body;
+function genId(prefix: string) {
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
 
-  if (!trip_id || !date || !amount) {
-    return NextResponse.json({ error: "Missing fields" }, { status: 400 });
+async function isOwnerOfTrip(tripId: string, email: string) {
+  const { values } = await sheetsGet(TRIPS_RANGE);
+  const rows = values ?? [];
+  const r = rows.find((x: any[]) => String(x?.[0] ?? "").trim() === tripId);
+  if (!r) return false;
+  const owner = String(r?.[5] ?? "").toLowerCase();
+  return owner === email.toLowerCase();
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const session: any = await getServerSession(authOptions);
+    const email = (session?.user?.email || "").toLowerCase();
+    if (!email) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    const body = await req.json();
+    const trip_id = String(body?.trip_id || "").trim();
+    if (!trip_id) return NextResponse.json({ error: "Missing trip_id" }, { status: 400 });
+
+    if (!(await isOwnerOfTrip(trip_id, email))) {
+      return NextResponse.json({ error: "Not allowed" }, { status: 403 });
+    }
+
+    const id = genId("EXP");
+    const row = [
+      id,                                   // A id
+      trip_id,                              // B trip_id
+      String(body?.date || ""),             // C date
+      String(body?.category || "other"),    // D category
+      String(body?.description || ""),      // E description
+      Number(body?.amount || 0),            // F amount
+      String(body?.currency || "HUF"),      // G currency
+      String(body?.payment_method || "card")// H payment_method
+    ];
+
+    await sheetsAppend(EXPENSES_A1, [row]);
+    return NextResponse.json({ ok: true, id }, { status: 200 });
+  } catch (e: any) {
+    console.error("/api/expenses/add error:", e?.message || e);
+    return NextResponse.json({ error: "Add expense error" }, { status: 500 });
   }
-
-  // bejelentkezett user azonosító (email)
-  const requester =
-    ((session as any).userId as string | undefined) ||
-    ((session.user as any)?.email as string | undefined) ||
-    "";
-
-  // megkeressük a trippet és a tulajt
-  const { index: tripIdx, row: tripRow } = await sheetsFindRowBy(
-    TRIPS_RANGE,
-    (r) => (r?.[0] || "") === trip_id
-  );
-
-  if (tripIdx < 0 || !tripRow) {
-    return NextResponse.json({ error: "Trip not found" }, { status: 404 });
-  }
-
-  const ownerUserId = (tripRow[5] || "").toLowerCase();
-  const requesterId = requester.toLowerCase();
-
-  if (!ownerUserId || ownerUserId !== requesterId) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
-
-  // minden ok → beírjuk az expense-t
-  const expenseId = `EXP_${Date.now()}`;
-  await sheetsAppend(EXPENSES_HEADER_RANGE, [
-    expenseId,
-    trip_id,
-    date,
-    category,
-    description,
-    Number(amount),
-    currency,
-    payment_method,
-    new Date().toISOString(),
-  ]);
-
-  return NextResponse.json({ ok: true, id: expenseId });
 }
