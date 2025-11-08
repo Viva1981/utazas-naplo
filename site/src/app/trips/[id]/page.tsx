@@ -772,9 +772,13 @@ function ExpensesSection(props: any) {
                   {openMenuId === ex.id && (
                     <div className="absolute top-10 right-2 z-10 bg-white border rounded-lg shadow-lg min-w-[160px]">
                       <div className="p-1">
-                        <button type="button" className="w-full text-left text-sm px-3 py-2 hover:bg-gray-50 rounded" onClick={() => { setOpenMenuId(null); setEditExpId(ex.id); setEditExp({ ...ex }); }}>
-                          ✏️ Szerkesztés
-                        </button>
+                        <button
+  type="button"
+  className="w-full text-left text-sm px-3 py-2 hover:bg-gray-50 rounded"
+  onClick={() => { setOpenMenuId(null); openEditExp(ex); }}
+>
+  ✏️ Szerkesztés
+</button>
                         <button type="button" className="w-full text-left text-sm px-3 py-2 hover:bg-red-50 text-red-600 rounded" onClick={() => deleteExpense(ex.id)}>
                           🗑️ Törlés
                         </button>
