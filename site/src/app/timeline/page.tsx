@@ -1,63 +1,69 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import TimelineFilters from "@/components/TimelineFilters";
+import TripCard from "@/components/TripCard";
 
-type TimelineItem = {
+type Trip = {
   id: string;
   title: string;
+  start_date?: string;
+  end_date?: string;
   destination?: string;
-  date?: string; // YYYY-MM vagy YYYY
-  trip_id?: string;
+  visibility?: "public" | "private";
 };
 
 export default function TimelinePage() {
-  const [items, setItems] = useState<TimelineItem[]>([]);
+  const sp = useSearchParams();
+  const [items, setItems] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const qs = useMemo(() => {
+    const p = new URLSearchParams();
+    for (const k of ["q","from","to","vis","mine"] as const) {
+      const v = sp.get(k);
+      if (v) p.set(k, v);
+    }
+    return p.toString();
+  }, [sp]);
 
   useEffect(() => {
     let alive = true;
+    setLoading(true);
     (async () => {
-      try {
-        const r = await fetch("/api/timeline", { cache: "no-store" });
-        const list: TimelineItem[] = r.ok ? await r.json().catch(() => []) : [];
-        if (alive) setItems(list);
-      } finally {
-        if (alive) setLoading(false);
-      }
+      const r = await fetch(`/api/trips/list${qs ? `?${qs}` : ""}`, { cache: "no-store" });
+      const list: Trip[] = r.ok ? await r.json().catch(() => []) : [];
+      if (alive) setItems(Array.isArray(list) ? list : []);
+      if (alive) setLoading(false);
     })();
     return () => { alive = false; };
-  }, []);
+  }, [qs]);
 
   return (
-    <main className="max-w-4xl mx-auto px-4 py-4 md:py-8">
-      <h1 className="text-xl md:text-2xl font-semibold mb-4">Idővonal</h1>
+    <main className="max-w-5xl mx-auto px-4 py-4 md:py-8 grid gap-4">
+      <h1 className="text-xl md:text-2xl font-semibold">Idővonal</h1>
+
+      <TimelineFilters />
 
       {loading ? (
         <p>Betöltés…</p>
       ) : items.length === 0 ? (
-        <p>Még nincs adat az idővonalon.</p>
+        <p>Nincs találat a beállított szűrőkre.</p>
       ) : (
-        <ul className="space-y-3">
-          {items.map((it) => (
-            <li key={it.id} className="border rounded-xl p-3 bg-white/80 backdrop-blur-sm">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-sm text-gray-500">{it.date || "—"}</div>
-                  <div className="font-medium">{it.title}</div>
-                  <div className="text-sm text-gray-700">{it.destination || "—"}</div>
-                </div>
-                {it.trip_id && (
-                  <a
-                    className="text-sm underline"
-                    href={`/trips/${encodeURIComponent(it.trip_id)}`}
-                  >
-                    Megnyitás
-                  </a>
-                )}
-              </div>
-            </li>
+        <div className="grid gap-3">
+          {items.map(t => (
+            <TripCard
+              key={t.id}
+              id={t.id}
+              title={t.title}
+              destination={t.destination}
+              start_date={t.start_date}
+              end_date={t.end_date}
+              visibility={t.visibility}
+            />
           ))}
-        </ul>
+        </div>
       )}
     </main>
   );
