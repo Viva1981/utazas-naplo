@@ -176,9 +176,9 @@ function TripDetail({ id }: { id: string }) {
   }
 
   // ======== MEDIA EDIT/TGL/DELETE ========
-  function openEdit(id: string, currentTitle?: string) {
+  function openEdit(mid: string, currentTitle?: string) {
     setOpenMenuId(null);
-    setEditTitleId(id);
+    setEditTitleId(mid);
     setEditTitleValue(currentTitle || "");
   }
   function closeEdit() {
@@ -270,9 +270,7 @@ function TripDetail({ id }: { id: string }) {
   }
 
   // ======== TRIP EDIT ========
-  function beginTripEdit() {
-    setEditTripMode(true);
-  }
+  function beginTripEdit() { setEditTripMode(true); }
   function cancelTripEdit() {
     if (trip) {
       setTripForm({
@@ -301,7 +299,6 @@ function TripDetail({ id }: { id: string }) {
     });
     if (r.ok) {
       setEditTripMode(false);
-      // frissítjük a fejléc adatokat
       const r2 = await fetch(`/api/trips/get/${id}`, { cache: "no-store" });
       if (r2.ok) {
         const t: Trip = await r2.json().catch(() => null as any);
@@ -310,32 +307,6 @@ function TripDetail({ id }: { id: string }) {
       router.refresh();
     }
   }
-
-  const KebabBtn = ({ onClick }: { onClick: () => void }) => (
-    <button
-      type="button"
-      onClick={onClick}
-      className="absolute top-2 right-2 rounded-full p-1.5 bg-white/90 hover:bg-white shadow border"
-      aria-label="Műveletek"
-    >
-      <svg width="16" height="16" viewBox="0 0 24 24" className="opacity-80">
-        <circle cx="5" cy="12" r="1.8"></circle>
-        <circle cx="12" cy="12" r="1.8"></circle>
-        <circle cx="19" cy="12" r="1.8"></circle>
-      </svg>
-    </button>
-  );
-
-  const MiniMenu = ({ children, onClose }: { children: React.ReactNode; onClose: () => void }) => (
-    <div className="absolute top-10 right-2 z-10 bg-white border rounded-lg shadow-lg min-w-[160px]">
-      <div className="p-1">{children}</div>
-      <button type="button" onClick={onClose} className="w-full text-xs text-gray-500 py-1 hover:bg-gray-50 border-t">
-        Bezár
-      </button>
-    </div>
-  );
-
-  // ======== RENDER ========
 
   return (
     <main className="p-6 grid gap-6">
@@ -451,6 +422,7 @@ function TripDetail({ id }: { id: string }) {
           <em className="text-gray-600">Még nincs kép.</em>
         ) : (
           <MediaPhotoGrid
+            tripId={id}
             items={photos}
             isOwner={isOwner}
             openMenuId={openMenuId}
@@ -489,6 +461,7 @@ function TripDetail({ id }: { id: string }) {
           <em className="text-gray-600">Nincs dokumentum.</em>
         ) : (
           <MediaDocGrid
+            tripId={id}
             items={docs}
             isOwner={isOwner}
             openMenuId={openMenuId}
@@ -526,13 +499,18 @@ function TripDetail({ id }: { id: string }) {
   );
 }
 
-/* ==== Kisegítő al-komponensek a kód olvashatóságáért ==== */
+/* ==== Kisegítő al-komponensek ==== */
 function MediaPhotoGrid(props: any) {
   const {
-    items, isOwner, openMenuId, setOpenMenuId,
+    tripId, items, isOwner, openMenuId, setOpenMenuId,
     editTitleId, editTitleValue, setEditTitleValue,
     openEdit, closeEdit, savePhotoTitle, deletePhoto,
   } = props;
+
+  const onOpen = (photoId: string) => {
+    // IN-APP: deep link, ami azonnal felnyitja a ViewerModal-t
+    window.location.href = `/trips/${encodeURIComponent(tripId)}/photos/${encodeURIComponent(photoId)}`;
+  };
 
   const KebabBtn = ({ onClick }: { onClick: () => void }) => (
     <button type="button" onClick={onClick} className="absolute top-2 right-2 rounded-full p-1.5 bg-white/90 hover:bg-white shadow border" aria-label="Műveletek">
@@ -552,11 +530,10 @@ function MediaPhotoGrid(props: any) {
     <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))" }}>
       {items.map((m: any) => {
         const thumb = `/api/photos/thumb/${encodeURIComponent(m.id)}`;
-        const full = `/api/photos/file/${encodeURIComponent(m.id)}`;
         const isEditing = editTitleId === m.id;
         return (
           <div key={m.id} className="relative rounded overflow-hidden border bg-gray-50 hover:shadow transition">
-            <a href={full} target="_blank" rel="noreferrer" className="block">
+            <button type="button" className="block w-full text-left" onClick={() => onOpen(m.id)} aria-label="Megnyitás">
               <img
                 src={thumb}
                 alt={m.title || "kép"}
@@ -570,7 +547,7 @@ function MediaPhotoGrid(props: any) {
                   }
                 }}
               />
-            </a>
+            </button>
 
             <div className="p-2 border-t bg-white flex items-center gap-2">
               {isEditing ? (
@@ -604,10 +581,14 @@ function MediaPhotoGrid(props: any) {
 
 function MediaDocGrid(props: any) {
   const {
-    items, isOwner, openMenuId, setOpenMenuId,
+    tripId, items, isOwner, openMenuId, setOpenMenuId,
     editTitleId, editTitleValue, setEditTitleValue,
     openEdit, closeEdit, saveDocTitle, toggleDocVisibility, deleteDoc,
   } = props;
+
+  const onOpen = (docId: string) => {
+    window.location.href = `/trips/${encodeURIComponent(tripId)}/documents/${encodeURIComponent(docId)}`;
+  };
 
   const KebabBtn = ({ onClick }: { onClick: () => void }) => (
     <button type="button" onClick={onClick} className="absolute top-2 right-2 rounded-full p-1.5 bg-white/90 hover:bg-white shadow border" aria-label="Műveletek">
@@ -627,12 +608,11 @@ function MediaDocGrid(props: any) {
     <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>
       {items.map((d: any) => {
         const thumb = `/api/documents/thumb/${encodeURIComponent(d.id)}`;
-        const full = `/api/documents/file/${encodeURIComponent(d.id)}`;
         const isEditing = editTitleId === d.id;
 
         return (
           <article key={d.id} className="relative border rounded-lg overflow-hidden bg-white shadow-sm">
-            <a href={full} target="_blank" rel="noreferrer">
+            <button type="button" className="block w-full text-left" onClick={() => onOpen(d.id)} aria-label="Megnyitás">
               <div className="bg-gray-100" style={{ aspectRatio: "4/3" }}>
                 <img
                   src={thumb}
@@ -647,7 +627,7 @@ function MediaDocGrid(props: any) {
                   }}
                 />
               </div>
-            </a>
+            </button>
 
             <div className="p-3 border-t bg-white">
               {isEditing ? (
@@ -718,9 +698,8 @@ function ExpensesSection(props: any) {
     if (r.ok) {
       setMsgExp("Siker ✅");
       (e.currentTarget as HTMLFormElement).reset();
-      // újratöltés a szokásos módon
-      await fetch(`/api/expenses/list?trip_id=${id}`, { cache: "no-store" }).then(r=>r.json()).then((arr)=>{});
-      location.reload(); // legbiztosabb
+      await fetch(`/api/expenses/list?trip_id=${id}`, { cache: "no-store" });
+      location.reload();
     } else {
       setMsgExp("Hiba ❌ " + (j?.error || r.status));
     }
@@ -776,7 +755,7 @@ function ExpensesSection(props: any) {
                 </>
               )}
 
-              {isOwner && !isEditing && (
+              {!isEditing && (
                 <>
                   <button
                     type="button"
@@ -793,7 +772,7 @@ function ExpensesSection(props: any) {
                   {openMenuId === ex.id && (
                     <div className="absolute top-10 right-2 z-10 bg-white border rounded-lg shadow-lg min-w-[160px]">
                       <div className="p-1">
-                        <button type="button" className="w-full text-left text-sm px-3 py-2 hover:bg-gray-50 rounded" onClick={() => { openEditExp(ex); }}>
+                        <button type="button" className="w-full text-left text-sm px-3 py-2 hover:bg-gray-50 rounded" onClick={() => { setOpenMenuId(null); setEditExpId(ex.id); setEditExp({ ...ex }); }}>
                           ✏️ Szerkesztés
                         </button>
                         <button type="button" className="w-full text-left text-sm px-3 py-2 hover:bg-red-50 text-red-600 rounded" onClick={() => deleteExpense(ex.id)}>
