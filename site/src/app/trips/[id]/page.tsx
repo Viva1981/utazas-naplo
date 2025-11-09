@@ -325,18 +325,6 @@ function TripDetail({ id }: { id: string }) {
                     Privát út
                   </div>
                 )}
-                {trip!.drive_folder_link && (
-                  <div>
-                    <a
-                      href={trip!.drive_folder_link}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-sm text-blue-600 underline inline-block mt-1"
-                    >
-                      📁 Megnyitás a Google Drive-ban
-                    </a>
-                  </div>
-                )}
               </div>
               {isOwner && (
                 <button
@@ -508,7 +496,7 @@ function MediaPhotoGrid(props: any) {
   } = props;
 
   const onOpen = (photoId: string) => {
-    // IN-APP: deep link, ami azonnal felnyitja a ViewerModal-t
+    // IN-APP: deep link → viewer modal
     window.location.href = `/trips/${encodeURIComponent(tripId)}/photos/${encodeURIComponent(photoId)}`;
   };
 
@@ -586,8 +574,9 @@ function MediaDocGrid(props: any) {
     openEdit, closeEdit, saveDocTitle, toggleDocVisibility, deleteDoc,
   } = props;
 
+  // DOCUMENTUM: új lapon nyitjuk a proxy URL-t → stabil PDF/office nézet minden böngészőben
   const onOpen = (docId: string) => {
-    window.location.href = `/trips/${encodeURIComponent(tripId)}/documents/${encodeURIComponent(docId)}`;
+    window.open(`/api/documents/file/${encodeURIComponent(docId)}`, "_blank", "noopener,noreferrer");
   };
 
   const KebabBtn = ({ onClick }: { onClick: () => void }) => (
@@ -723,7 +712,6 @@ function ExpensesSection(props: any) {
           </div>
         </form>
       ) : (
-        <em>Csak a tulajdonos rögzíthet költéseket ehhez az úthoz.</em>
       )}
 
       <ul className="grid gap-2 mt-3">
@@ -773,12 +761,12 @@ function ExpensesSection(props: any) {
                     <div className="absolute top-10 right-2 z-10 bg-white border rounded-lg shadow-lg min-w-[160px]">
                       <div className="p-1">
                         <button
-  type="button"
-  className="w-full text-left text-sm px-3 py-2 hover:bg-gray-50 rounded"
-  onClick={() => { setOpenMenuId(null); openEditExp(ex); }}
->
-  ✏️ Szerkesztés
-</button>
+                          type="button"
+                          className="w-full text-left text-sm px-3 py-2 hover:bg-gray-50 rounded"
+                          onClick={() => { setOpenMenuId(null); openEditExp(ex); }}
+                        >
+                          ✏️ Szerkesztés
+                        </button>
                         <button type="button" className="w-full text-left text-sm px-3 py-2 hover:bg-red-50 text-red-600 rounded" onClick={() => deleteExpense(ex.id)}>
                           🗑️ Törlés
                         </button>
@@ -798,3 +786,4 @@ function ExpensesSection(props: any) {
     </section>
   );
 }
+
