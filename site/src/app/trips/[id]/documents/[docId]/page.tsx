@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import ViewerModal from "@/components/ViewerModal";
 
-type Doc = {
+type DocItem = {
   id: string;
   trip_id: string;
   title: string;
