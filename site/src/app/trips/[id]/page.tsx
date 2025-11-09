@@ -325,6 +325,18 @@ function TripDetail({ id }: { id: string }) {
                     Privát út
                   </div>
                 )}
+                {trip!.drive_folder_link && (
+                  <div>
+                    <a
+                      href={trip!.drive_folder_link}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sm text-blue-600 underline inline-block mt-1"
+                    >
+                      📁 Megnyitás a Google Drive-ban
+                    </a>
+                  </div>
+                )}
               </div>
               {isOwner && (
                 <button
@@ -712,6 +724,7 @@ function ExpensesSection(props: any) {
           </div>
         </form>
       ) : (
+        <em>Csak a tulajdonos rögzíthet költéseket ehhez az úthoz.</em>
       )}
 
       <ul className="grid gap-2 mt-3">
@@ -786,4 +799,3 @@ function ExpensesSection(props: any) {
     </section>
   );
 }
-
