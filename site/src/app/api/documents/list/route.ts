@@ -60,7 +60,7 @@ export async function GET(req: NextRequest) {
         trip_id: String(r?.[1] ?? ""),         // B
         title: String(r?.[2] ?? ""),           // C
         drive_file_id: String(r?.[3] ?? ""),   // D
-        mimeType: String(r?.[4] ?? "") || String(r?.mime ?? ""),
+        mimeType: String(r?.[4] ?? ""),
         webViewLink: String(r?.[5] ?? ""),     // F
         webContentLink: String(r?.[6] ?? ""),  // G
         thumbnailLink: String(r?.[7] ?? ""),   // H
