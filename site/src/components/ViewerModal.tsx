@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 export type ViewerModalProps = {
   open: boolean;
@@ -18,16 +18,16 @@ function buildImageUrl(driveId: string) {
   return `https://drive.google.com/uc?export=view&id=${id}`;
 }
 
-function buildPdfChain(driveId: string, proxyPath?: string) {
+function buildPdfChainFirstLocal(driveId: string, proxyPath?: string) {
   const id = encodeURIComponent(driveId);
   const downloadUrl = `https://drive.google.com/uc?id=${id}&export=download`;
-  // 1) Google Docs Viewer (HTML alapú, PWA-ban stabil)
+  // 1) SAJÁT SAME-ORIGIN STREAM – ezt szereti a PWA/webview
+  const local = proxyPath || "";
+  // 2) Google Docs Viewer (HTML alapú, sok webview-ban stabil)
   const gview = `https://docs.google.com/gview?embedded=1&url=${encodeURIComponent(downloadUrl)}`;
-  // 2) Drive preview
+  // 3) Drive preview
   const preview = `https://drive.google.com/file/d/${id}/preview`;
-  // 3) Saját stream (PWA-barát)
-  const mine = proxyPath || "";
-  return [gview, preview, mine].filter(Boolean);
+  return [local, gview, preview].filter(Boolean);
 }
 
 export default function ViewerModal(props: ViewerModalProps) {
@@ -47,17 +47,35 @@ export default function ViewerModal(props: ViewerModalProps) {
   if (!open) return null;
 
   const [pdfStep, setPdfStep] = useState(0);
+  const loadGuard = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
-    // modal nyitásakor mindig 0. lépésről indulunk
     if (open) setPdfStep(0);
+    return () => {
+      if (loadGuard.current) clearTimeout(loadGuard.current);
+      loadGuard.current = null;
+    };
   }, [open]);
 
   const imageUrl = useMemo(() => buildImageUrl(driveFileId), [driveFileId]);
-  const pdfUrls = useMemo(() => buildPdfChain(driveFileId, proxyPath), [driveFileId, proxyPath]);
+  const pdfUrls = useMemo(
+    () => buildPdfChainFirstLocal(driveFileId, proxyPath),
+    [driveFileId, proxyPath]
+  );
   const pdfSrc = pdfUrls[pdfStep] || "";
 
   const isImage = !!mime?.startsWith("image/");
   const isPdf = mime === "application/pdf";
+
+  // ha az aktuális pdfSrc „némán” blokkolódik (X-Frame-Options), nem jön onError – ezért időalapú fallback:
+  const armLoadGuard = () => {
+    if (loadGuard.current) clearTimeout(loadGuard.current);
+    loadGuard.current = setTimeout(() => {
+      if (pdfStep < pdfUrls.length - 1) {
+        setPdfStep(s => s + 1);
+      }
+    }, 2500); // 2.5s után lépünk a következő forrásra, ha nem jött be rendesen
+  };
 
   return (
     <div
@@ -74,9 +92,23 @@ export default function ViewerModal(props: ViewerModalProps) {
           <div className="font-medium truncate">
             {title || (isImage ? "Kép" : isPdf ? "PDF" : "Dokumentum")}
           </div>
-          <button onClick={onClose} className="text-sm px-3 py-1 border rounded-md hover:bg-gray-50">
-            Bezárás
-          </button>
+          <div className="flex items-center gap-2">
+            {isPdf && pdfUrls.length > 0 && (
+              <a
+                href={pdfUrls[0] || "#"}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs px-2 py-1 border rounded-md hover:bg-gray-50"
+                onClick={(e) => e.stopPropagation()}
+                title="Megnyitás új lapon"
+              >
+                Megnyitás
+              </a>
+            )}
+            <button onClick={onClose} className="text-sm px-3 py-1 border rounded-md hover:bg-gray-50">
+              Bezárás
+            </button>
+          </div>
         </div>
 
         <div className="bg-black/5">
@@ -96,7 +128,7 @@ export default function ViewerModal(props: ViewerModalProps) {
                     img.src = proxyPath;
                     return;
                   }
-                  // 2) végső fallback: download URL (sok böngésző képként is kirajzolja)
+                  // 2) végső fallback: download URL
                   if (img.dataset.step !== "download") {
                     img.dataset.step = "download";
                     img.src = `https://drive.google.com/uc?id=${encodeURIComponent(driveFileId)}&export=download`;
@@ -106,19 +138,30 @@ export default function ViewerModal(props: ViewerModalProps) {
             </div>
           ) : isPdf ? (
             <iframe
-              key={pdfSrc} // hogy onError után tényleg újratöltse a következő URL-t
+              key={pdfSrc} // forrásváltáskor tényleg újratöltse
               src={pdfSrc}
               title={title || "PDF"}
               className="w-full"
               style={{ height: "85vh", border: 0 }}
               allow="autoplay; fullscreen"
-              onError={() => {
-                // próbáljuk a következő forrást
-                if (pdfStep < pdfUrls.length - 1) setPdfStep(pdfStep + 1);
+              // ha tényleg betöltött, töröljük a fallback időzítőt
+              onLoad={() => {
+                if (loadGuard.current) {
+                  clearTimeout(loadGuard.current);
+                  loadGuard.current = null;
+                }
               }}
+              // ha hibát dob, lépjünk
+              onError={() => {
+                if (pdfStep < pdfUrls.length - 1) setPdfStep(s => s + 1);
+              }}
+              // blokkolt/néma esetekre időzített fallback
+              onMouseEnter={armLoadGuard}
+              onFocus={armLoadGuard}
+              onLoadCapture={armLoadGuard}
             />
           ) : (
-            // egyéb doksi – megpróbáljuk a saját streamet iframe-be
+            // egyéb doksi – sajáttal próbáljuk
             <iframe
               src={proxyPath || ""}
               title={title || "Dokumentum"}
