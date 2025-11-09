@@ -7,49 +7,75 @@ import ViewerModal from "@/components/ViewerModal";
 type Doc = {
   id: string;
   trip_id: string;
-  title?: string;
+  title: string;
   drive_file_id: string;
-  mimeType?: string;
+  mimeType: string;
+  webViewLink?: string;
+  webContentLink?: string;
+  thumbnailLink?: string;
+  doc_visibility?: "public" | "private";
 };
 
 export default function DocDeepLinkPage() {
-  const { id, docId } = useParams<{ id: string; docId: string }>();
+  const { id: tripId, docId } = useParams<{ id: string; docId: string }>();
   const router = useRouter();
-  const [item, setItem] = useState<Doc | null>(null);
 
+  const [doc, setDoc] = useState<DocItem | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // meta lekérés kliensen — session nélkül is menjen: public visszajön
   useEffect(() => {
     let alive = true;
-    (async () => {
-      const r = await fetch(`/api/documents/list?trip_id=${id}`, { cache: "no-store" });
-      const arr: Doc[] = r.ok ? await r.json().catch(() => []) : [];
-      const found = arr.find((d) => d.id === String(docId)) || null;
-      if (alive) setItem(found);
-    })();
+    async function run() {
+      try {
+        setLoading(true);
+        const r = await fetch(`/api/documents/list?trip_id=${encodeURIComponent(tripId)}`, { cache: "no-store" });
+        const arr: DocItem[] = await r.json();
+        if (!alive) return;
+        const one = (arr || []).find(x => x.id === docId) || null;
+        setDoc(one);
+      } catch (e) {
+        console.error("doc deep link meta error:", e);
+        setDoc(null);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }
+    run();
     return () => { alive = false; };
-  }, [id, docId]);
+  }, [tripId, docId]);
 
-  const proxyPath = useMemo(() => {
-    return item ? `/api/documents/file/${encodeURIComponent(item.id)}` : "";
-  }, [item]);
+  const title = doc?.title || "Dokumentum";
+  const mime  = doc?.mimeType || "";
+  const driveId = doc?.drive_file_id || "";
+  const proxy = useMemo(() => `/api/documents/file/${encodeURIComponent(String(docId))}`, [docId]);
+
+  const close = () => router.push(`/trips/${encodeURIComponent(String(tripId))}`);
+
+  // Minimal hibakezelés: ha nincs elem (vagy privát és nem owner),
+  // akkor visszadobjuk a trip oldalra.
+  useEffect(() => {
+    if (!loading && !doc) {
+      close();
+    }
+  }, [loading, doc]); // eslint-disable-line
+
+  // Közben is megjelenítjük a modalt (üres cím/forrás esetén nem renderel)
+  const canShow = !!driveId;
 
   return (
-    <main className="p-4">
-      <button
-        onClick={() => router.push(`/trips/${id}`)}
-        className="text-sm px-3 py-1 border rounded-md hover:bg-gray-50"
-      >
-        ← Vissza az útra
-      </button>
-
-      <ViewerModal
-        open={!!item}
-        onClose={() => router.push(`/trips/${id}`)}
-        title={item?.title}
-        mime={item?.mimeType}
-        driveFileId={item?.drive_file_id || ""}
-        mediaId={item?.id}
-        proxyPath={proxyPath}
-      />
-    </main>
+    <>
+      {canShow && (
+        <ViewerModal
+          open={true}
+          onClose={close}
+          title={title}
+          mime={mime}
+          driveFileId={driveId}
+          mediaId={docId}
+          proxyPath={proxy}
+        />
+      )}
+    </>
   );
 }

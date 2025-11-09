@@ -9,48 +9,66 @@ type Photo = {
   trip_id: string;
   title?: string;
   drive_file_id: string;
-  mimeType?: string;
+  mimeType: string;
+  thumbnailLink?: string;
 };
 
 export default function PhotoDeepLinkPage() {
-  const { id, photoId } = useParams<{ id: string; photoId: string }>();
+  const { id: tripId, photoId } = useParams<{ id: string; photoId: string }>();
   const router = useRouter();
-  const [item, setItem] = useState<Photo | null>(null);
+
+  const [photo, setPhoto] = useState<PhotoItem | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let alive = true;
-    (async () => {
-      // listából szűrünk, így nem kell külön GET endpoint
-      const r = await fetch(`/api/photos/list?trip_id=${id}`, { cache: "no-store" });
-      const arr: Photo[] = r.ok ? await r.json().catch(() => []) : [];
-      const found = arr.find((p) => p.id === String(photoId)) || null;
-      if (alive) setItem(found);
-    })();
+    async function run() {
+      try {
+        setLoading(true);
+        const r = await fetch(`/api/photos/list?trip_id=${encodeURIComponent(tripId)}`, { cache: "no-store" });
+        const arr: PhotoItem[] = await r.json();
+        if (!alive) return;
+        const one = (arr || []).find(x => x.id === photoId) || null;
+        setPhoto(one);
+      } catch (e) {
+        console.error("photo deep link meta error:", e);
+        setPhoto(null);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }
+    run();
     return () => { alive = false; };
-  }, [id, photoId]);
+  }, [tripId, photoId]);
 
-  const proxyPath = useMemo(() => {
-    return item ? `/api/photos/file/${encodeURIComponent(item.id)}` : "";
-  }, [item]);
+  const title = photo?.title || "Kép";
+  const mime  = photo?.mimeType || "image/jpeg";
+  const driveId = photo?.drive_file_id || "";
+  const proxy = useMemo(() => `/api/photos/file/${encodeURIComponent(String(photoId))}`, [photoId]);
+
+  const close = () => router.push(`/trips/${encodeURIComponent(String(tripId))}`);
+
+  useEffect(() => {
+    if (!loading && !photo) {
+      close();
+    }
+  }, [loading, photo]); // eslint-disable-line
+
+  const canShow = !!driveId;
 
   return (
-    <main className="p-4">
-      <button
-        onClick={() => router.push(`/trips/${id}`)}
-        className="text-sm px-3 py-1 border rounded-md hover:bg-gray-50"
-      >
-        ← Vissza az útra
-      </button>
-
-      <ViewerModal
-        open={!!item}
-        onClose={() => router.push(`/trips/${id}`)}
-        title={item?.title}
-        mime={item?.mimeType}
-        driveFileId={item?.drive_file_id || ""}
-        mediaId={item?.id}
-        proxyPath={proxyPath}
-      />
-    </main>
+    <>
+      {canShow && (
+        <ViewerModal
+          open={true}
+          onClose={close}
+          title={title}
+          mime={mime}
+          driveFileId={driveId}
+          mediaId={photoId}
+          proxyPath={proxy}
+        />
+      )}
+    </>
   );
 }
