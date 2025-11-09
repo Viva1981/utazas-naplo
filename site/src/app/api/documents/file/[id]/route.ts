@@ -3,12 +3,8 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { sheetsFindRowBy, sheetsGet } from "@/lib/sheets";
 
-// Documents: 0 id | 1 trip_id | 2 title | 3 drive_file_id | 4 mimeType
-// 5 webViewLink | 6 webContentLink | 7 thumbnailLink | 8 size
-// 9 created_at | 10 uploader | 11 archived_at | 12 doc_visibility
-const DOCS_RANGE  = "Documents!A2:M";
-// Trips: owner email index 5
-const TRIPS_RANGE = "Trips!A2:I";
+const DOCS_RANGE  = "Documents!A2:M"; // 0..12 (id..doc_visibility)
+const TRIPS_RANGE = "Trips!A2:I";     // owner e-mail index 5
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,21 +22,19 @@ async function getTripOwnerEmail(tripId: string) {
 
 function candidatesFor(driveId: string, mime: string, webView: string, webContent: string) {
   const id = encodeURIComponent(driveId);
-  // Próbáljuk sorban: download (bináris) → sheetből jövő linkek
-  const list: { url: string; forceMime?: string }[] = [];
-  // PDF-hez is jó a natív bináris; a renderelést a kliens iframe / viewer dönti el.
-  list.push({ url: `https://drive.google.com/uc?id=${id}&export=download`, forceMime: mime || "application/octet-stream" });
-  if (webContent) list.push({ url: webContent, forceMime: mime || "application/octet-stream" });
-  if (webView)    list.push({ url: webView,    forceMime: mime || "application/octet-stream" });
-  return list;
+  // Letöltési végpont első helyen (stabil stream), sheet-linkek fallbacknek
+  return [
+    { url: `https://drive.google.com/uc?id=${id}&export=download`, forceMime: mime || "application/octet-stream" },
+    webContent ? { url: webContent, forceMime: mime || "application/octet-stream" } : null,
+    webView    ? { url: webView,    forceMime: mime || "application/octet-stream" } : null,
+  ].filter(Boolean) as { url: string; forceMime?: string }[];
 }
 
 async function tryFetchWithTimeout(url: string, ms: number) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
   try {
-    const r = await fetch(url, { redirect: "follow", signal: ctrl.signal });
-    return r;
+    return await fetch(url, { redirect: "follow", signal: ctrl.signal });
   } catch (e) {
     console.error("documents/file fetch error:", e, "→", url);
     return null;
@@ -58,24 +52,25 @@ export async function GET(
     return NextResponse.json({ error: "Missing id" }, { status: 400, headers: { "Cache-Control": JSON_CACHE } });
   }
 
-  // 1) Meta a sheetből
   const { row } = await sheetsFindRowBy(DOCS_RANGE, r => (r?.[0] || "") === id);
   if (!row) return NextResponse.json({ error: "Not found" }, { status: 404, headers: { "Cache-Control": JSON_CACHE } });
 
-  // archivált?
-  if (String(row[11] || "")) return NextResponse.json({ error: "Archived" }, { status: 410, headers: { "Cache-Control": JSON_CACHE } });
+  if (String(row[11] || "")) {
+    return NextResponse.json({ error: "Archived" }, { status: 410, headers: { "Cache-Control": JSON_CACHE } });
+  }
 
-  const tripId   = String(row[1] || "");
-  const title    = String(row[2] || "");
-  const driveId  = String(row[3] || "");
-  const mime     = String(row[4] || "");
-  const webView  = String(row[5] || "");
-  const webCont  = String(row[6] || "");
-  const vis      = (String(row[12] || "private").toLowerCase() as "public" | "private");
+  const tripId  = String(row[1] || "");
+  const title   = String(row[2] || "");
+  const driveId = String(row[3] || "");
+  const mime    = String(row[4] || "");
+  const wv      = String(row[5] || "");
+  const wc      = String(row[6] || "");
+  const vis     = (String(row[12] || "private").toLowerCase() as "public" | "private");
 
-  if (!driveId) return NextResponse.json({ error: "Missing drive_file_id" }, { status: 400, headers: { "Cache-Control": JSON_CACHE } });
+  if (!driveId) {
+    return NextResponse.json({ error: "Missing drive_file_id" }, { status: 400, headers: { "Cache-Control": JSON_CACHE } });
+  }
 
-  // 2) Privát doksi → csak owner
   if (vis === "private") {
     const session: any = await getServerSession(authOptions).catch(() => null);
     const email = (session?.user?.email || "").toLowerCase();
@@ -85,32 +80,35 @@ export async function GET(
     }
   }
 
-  // 3) Drive-ból STREAM (nincs redirect)
-  const tries = candidatesFor(driveId, mime, webView, webCont);
+  const tries = candidatesFor(driveId, mime, wv, wc);
+
   for (const c of tries) {
     const res = await tryFetchWithTimeout(c.url, 8000);
-    if (!res) continue;
-    if (!res.ok) continue;
+    if (!res || !res.ok || !res.body) continue;
 
-    const ct = res.headers.get("content-type") || "";
-    const body = res.body;
-    if (!body) continue;
+    const rawCt = res.headers.get("content-type") || "";
+    const ctLower = rawCt.toLowerCase();
 
+    // ⬇️ Ha a Drive "application/octet-stream"-et ad, de mi tudjuk a MIME-ot, kényszerítsük rá.
+    //     HTML-t mindig kikerüljük.
     const outType =
-      (ct && !ct.startsWith("text/html")) ? ct :
-      (c.forceMime || mime || "application/octet-stream");
+      (!rawCt || ctLower.startsWith("text/html"))
+        ? (c.forceMime || mime || "application/octet-stream")
+        : (ctLower === "application/octet-stream" && (mime || c.forceMime))
+            ? (mime || c.forceMime)!
+            : rawCt;
 
-    // PDF-hez adjunk "inline" Content-Disposition-t, hogy a webview kirajzolhassa
     const headers: Record<string, string> = {
       "Content-Type": outType,
       "Cache-Control": FILE_CACHE,
     };
-    if ((outType || "").startsWith("application/pdf")) {
-      const safeName = (title || "document").replace(/[^a-zA-Z0-9._-]+/g, "_");
-      headers["Content-Disposition"] = `inline; filename="${safeName}.pdf"`;
+
+    if (outType.startsWith("application/pdf")) {
+      const safe = (title || "document").replace(/[^a-zA-Z0-9._-]+/g, "_");
+      headers["Content-Disposition"] = `inline; filename="${safe}.pdf"`;
     }
 
-    return new NextResponse(body, { status: 200, headers });
+    return new NextResponse(res.body, { status: 200, headers });
   }
 
   return NextResponse.json({ error: "Drive fetch failed" }, { status: 502, headers: { "Cache-Control": JSON_CACHE } });
