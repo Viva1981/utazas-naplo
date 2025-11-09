@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
     const tRow = tRows.find((r: any[]) => String(r?.[0] ?? "").trim() === tripId);
     if (tRow) {
       const ownerEmail = String(tRow?.[5] ?? "").toLowerCase();
-      isOwner = !!viewerEmail && ownerEmail && viewerEmail === ownerEmail;
+      isOwner = !!viewerEmail && !!ownerEmail && viewerEmail === ownerEmail;
       // (Ha a trip privát és NEM owner a néző → a dokumentumokból majd úgyis csak a public megy vissza.
       //  Itt NEM adunk 404-et, hogy publikus nézet PWA-ban is működjön.)
     }
