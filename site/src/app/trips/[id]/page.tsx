@@ -588,8 +588,8 @@ function MediaDocGrid(props: any) {
 
   // DOCUMENTUM: új lapon nyitjuk a proxy URL-t → stabil PDF/office nézet minden böngészőben
   const onOpen = (docId: string) => {
-    window.open(`/api/documents/file/${encodeURIComponent(docId)}`, "_blank", "noopener,noreferrer");
-  };
+    window.location.href = `/api/documents/file/${encodeURIComponent(docId)}`;
+ };
 
   const KebabBtn = ({ onClick }: { onClick: () => void }) => (
     <button type="button" onClick={onClick} className="absolute top-2 right-2 rounded-full p-1.5 bg-white/90 hover:bg-white shadow border" aria-label="Műveletek">
