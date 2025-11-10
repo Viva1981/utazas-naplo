@@ -22,17 +22,15 @@ export default function SiteHeader() {
   }
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-[9999] bg-white/80 backdrop-blur-md border-b border-gray-200">
+    <header className="hidden md:block fixed top-0 left-0 right-0 z-[9999] bg-white/80 backdrop-blur-md border-b border-gray-200">
       <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-        <Link href="/" className="font-semibold tracking-tight text-gray-800">
+        {/* Brand → /trips */}
+        <Link href="/trips" className="font-semibold tracking-tight text-gray-800">
           Utazás Napló
         </Link>
 
+        {/* Csak az auth gombok maradnak */}
         <nav className="flex items-center gap-4 text-sm">
-          <Link href="/" className="hover:underline">Főoldal</Link>
-          <Link href="/trips" className="hover:underline">Utak</Link>
-          <Link href="/timeline" className="hover:underline">Idővonal</Link>
-
           {status === "authenticated" && session?.user ? (
             <a
               href="/api/auth/signout?callbackUrl=%2F"
