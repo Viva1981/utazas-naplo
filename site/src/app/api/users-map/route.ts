@@ -1,13 +1,14 @@
-export const runtime = "nodejs"; // fontos!
+export const runtime = "nodejs"; // kell a googleapis miatt
 
 import { NextResponse } from "next/server";
 
 export async function GET() {
   try {
-    // @ts-ignore – Turbopack kompatibilis dinamikus import
+    // Turbopack-barát dinamikus import
+    // @ts-ignore
     const { google } = await import("googleapis");
 
-    // ✅ támogatja mindkét környezeti változó nevet
+    // ✅ mindkét env név támogatott
     const spreadsheetId =
       process.env.GOOGLE_SHEETS_DB_SPREADSHEET_ID ||
       process.env.SHEETS_SPREADSHEET_ID;
@@ -28,6 +29,7 @@ export async function GET() {
       );
     }
 
+    // Google Sheets hitelesítés
     const auth = new google.auth.JWT({
       email: clientEmail,
       key: privateKey,
@@ -36,6 +38,7 @@ export async function GET() {
 
     const sheets = google.sheets({ version: "v4", auth });
 
+    // Users sheet olvasása
     const range = "Users!A:Z";
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId,
@@ -54,10 +57,24 @@ export async function GET() {
       });
     }
 
-    const headers = rows[0].map((h: any) => String(h || "").trim().toLowerCase());
-    const idxUserId = headers.indexOf("user_id");
-    const idxName = headers.indexOf("display_name");
+    // === fejléc normalizálása ===
+    const headers = rows[0].map((h: any) =>
+      String(h || "").trim().toLowerCase().replace(/\s+/g, "_")
+    );
 
+    // user_id oszlop keresése
+    const idxUserId =
+      headers.indexOf("user_id") !== -1
+        ? headers.indexOf("user_id")
+        : headers.findIndex((h) => h.includes("user"));
+
+    // display_name / name / full_name keresése
+    const idxNameCandidates = ["display_name", "name", "full_name"];
+    const idxName = headers.findIndex((h) =>
+      idxNameCandidates.some((c) => h.includes(c))
+    );
+
+    // === adatok feldolgozása ===
     const users: Record<string, string> = {};
     for (const row of rows.slice(1)) {
       const userId = String(row[idxUserId] ?? "").trim();
@@ -74,6 +91,9 @@ export async function GET() {
     });
   } catch (err) {
     console.error("GET /api/users-map error:", err);
-    return NextResponse.json({ error: "Failed to load users map" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to load users map" },
+      { status: 500 }
+    );
   }
 }
