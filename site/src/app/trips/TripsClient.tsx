@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import TimelineFilters from "@/components/TimelineFilters";
 
@@ -11,15 +11,17 @@ type Trip = {
   start_date?: string;
   end_date?: string;
   visibility?: "public" | "private";
-  owner_user_id?: string;     // DB-ből jöhet
-  created_by_name?: string;   // API join: Users.display_name (fallback: "—")
+  owner_user_id?: string;
+  created_by_name?: string;
 };
 
 export default function TripsClient() {
   const sp = useSearchParams();
   const [trips, setTrips] = useState<Trip[]>([]);
+  const [usersMap, setUsersMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
 
+  // Trips lekérés a query alapján
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -33,7 +35,33 @@ export default function TripsClient() {
       }
     })();
     return () => { alive = false; };
-  }, [sp]); // a TimelineFilters módosítja az URL-t -> frissül a lista
+  }, [sp]);
+
+  // Users map lekérés (id → display_name)
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch("/api/users-map", { cache: "force-cache" });
+        const map = r.ok ? await r.json().catch(() => ({})) : {};
+        if (alive) setUsersMap(map);
+      } catch {
+        if (alive) setUsersMap({});
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // Kiegészített lista: ha nincs created_by_name, kipótlás owner_user_id alapján
+  const enrichedTrips = useMemo(() => {
+    if (!trips || !Array.isArray(trips)) return [];
+    if (!usersMap || typeof usersMap !== "object") return trips;
+    return trips.map(t => {
+      if (t.created_by_name && t.created_by_name.trim() !== "") return t;
+      const name = t.owner_user_id ? usersMap[t.owner_user_id] : undefined;
+      return { ...t, created_by_name: name || t.created_by_name || "—" };
+    });
+  }, [trips, usersMap]);
 
   return (
     <main className="max-w-5xl mx-auto px-4 py-4 md:py-8">
@@ -47,21 +75,20 @@ export default function TripsClient() {
         </a>
       </div>
 
-      {/* Keresősáv a tetején */}
       <div className="mb-4">
         <TimelineFilters />
       </div>
 
       {loading ? (
         <p>Betöltés…</p>
-      ) : trips.length === 0 ? (
+      ) : enrichedTrips.length === 0 ? (
         <p>
           Nincs találat. Próbálj másik keresést, vagy kezdj egy{" "}
           <a className="underline" href="/trips/new">új utazást</a>.
         </p>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
-          {trips.map((t) => (
+          {enrichedTrips.map((t) => (
             <a
               key={t.id}
               href={`/trips/${encodeURIComponent(t.id)}`}
@@ -85,7 +112,6 @@ export default function TripsClient() {
                 {(t.start_date || "—")} → {(t.end_date || "—")}
               </p>
 
-              {/* Létrehozó neve */}
               <p className="text-xs text-gray-500 mt-1">
                 Létrehozta: {t.created_by_name || "—"}
               </p>
