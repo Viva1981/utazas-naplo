@@ -1,22 +1,29 @@
-import { NextResponse } from "next/server";
-import { google } from "googleapis";
+export const runtime = "nodejs"; // fontos!
 
-export const runtime = "nodejs";
+import { NextResponse } from "next/server";
+
+/**
+ * Dinamikus import (Turbopack-barát)
+ * és biztonságos fallback hiba esetén.
+ */
 export async function GET() {
   try {
+    const { google } = await import("googleapis");
+
     const spreadsheetId = process.env.SHEETS_SPREADSHEET_ID;
-    const clientEmail   = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-    // A private key-ben a \n-eket vissza kell alakítani valódi soremeléssé:
+    const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
     const privateKeyRaw = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || "";
-    const privateKey    = privateKeyRaw.replace(/\\n/g, "\n");
+    const privateKey = privateKeyRaw.replace(/\\n/g, "\n");
 
     if (!spreadsheetId || !clientEmail || !privateKey) {
+      console.error("Missing Google Sheets credentials");
       return NextResponse.json(
         { error: "Missing Google Sheets credentials (env vars)" },
         { status: 500 }
       );
     }
 
+    // Google Sheets auth
     const auth = new google.auth.JWT({
       email: clientEmail,
       key: privateKey,
@@ -25,36 +32,32 @@ export async function GET() {
 
     const sheets = google.sheets({ version: "v4", auth });
 
-    // Feltételezzük, hogy a sheet neve "Users" és van fejléc sora.
-    // Ha más a neve, írd meg és átírom.
+    // Lekérés: Users sheet (ha máshogy hívják, írd meg és javítom)
     const range = "Users!A:Z";
-    const resp = await sheets.spreadsheets.values.get({
+    const res = await sheets.spreadsheets.values.get({
       spreadsheetId,
       range,
       valueRenderOption: "UNFORMATTED_VALUE",
     });
 
-    const rows = resp.data.values || [];
-    if (rows.length === 0) {
-      return NextResponse.json({}, { status: 200 });
-    }
+    const rows = res.data.values || [];
+    if (rows.length < 2) return NextResponse.json({}, { status: 200 });
 
-    // Fejléc → indexelés
+    // fejléc indexelés
     const headers = rows[0].map((h: any) => String(h || "").trim().toLowerCase());
-    const data = rows.slice(1);
-
     const idxUserId = headers.indexOf("user_id");
-    const idxName   = headers.indexOf("display_name");
+    const idxName = headers.indexOf("display_name");
 
-    const map: Record<string, string> = {};
-    for (const r of data) {
-      const userId = String(r[idxUserId] ?? "").trim();
-      const name   = String(r[idxName] ?? "").trim();
-      if (userId) map[userId] = name || "—";
+    const dataRows = rows.slice(1);
+    const users: Record<string, string> = {};
+
+    for (const row of dataRows) {
+      const userId = String(row[idxUserId] ?? "").trim();
+      const name = String(row[idxName] ?? "").trim();
+      if (userId) users[userId] = name || "—";
     }
 
-    // 60 mp cache-elésre CDN/edge szintű header
-    return new NextResponse(JSON.stringify(map), {
+    return new NextResponse(JSON.stringify(users), {
       status: 200,
       headers: {
         "Content-Type": "application/json",
@@ -62,7 +65,10 @@ export async function GET() {
       },
     });
   } catch (err) {
-    console.error("GET /api/users-map error:", err);
-    return NextResponse.json({ error: "Failed to load users map" }, { status: 500 });
+    console.error("users-map error:", err);
+    return NextResponse.json(
+      { error: "Failed to fetch user map" },
+      { status: 500 }
+    );
   }
 }
