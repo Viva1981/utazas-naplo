@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 import { google } from "googleapis";
 
-// Ha Edge runtime lenne beállítva, kapcsold ki, mert a googleapis Node runtimet igényel.
-// export const runtime = "nodejs";
-
+export const runtime = "nodejs";
 export async function GET() {
   try {
     const spreadsheetId = process.env.SHEETS_SPREADSHEET_ID;
