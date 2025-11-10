@@ -1,14 +1,13 @@
-export const runtime = "nodejs"; // kell a googleapis miatt
+export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 
 export async function GET() {
   try {
-    // Turbopack-barát dinamikus import
+    // Turbopack-biztos dinamikus import
     // @ts-ignore
     const { google } = await import("googleapis");
 
-    // ✅ mindkét env név támogatott
     const spreadsheetId =
       process.env.GOOGLE_SHEETS_DB_SPREADSHEET_ID ||
       process.env.SHEETS_SPREADSHEET_ID;
@@ -29,7 +28,6 @@ export async function GET() {
       );
     }
 
-    // Google Sheets hitelesítés
     const auth = new google.auth.JWT({
       email: clientEmail,
       key: privateKey,
@@ -38,7 +36,6 @@ export async function GET() {
 
     const sheets = google.sheets({ version: "v4", auth });
 
-    // Users sheet olvasása
     const range = "Users!A:Z";
     const res = await sheets.spreadsheets.values.get({
       spreadsheetId,
@@ -66,11 +63,11 @@ export async function GET() {
     const idxUserId =
       headers.indexOf("user_id") !== -1
         ? headers.indexOf("user_id")
-        : headers.findIndex((h) => h.includes("user"));
+        : headers.findIndex((h: string) => h.includes("user"));
 
     // display_name / name / full_name keresése
     const idxNameCandidates = ["display_name", "name", "full_name"];
-    const idxName = headers.findIndex((h) =>
+    const idxName = headers.findIndex((h: string) =>
       idxNameCandidates.some((c) => h.includes(c))
     );
 
