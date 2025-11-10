@@ -1,28 +1,10 @@
 export default function HomePage() {
   const cards = [
     {
-      title: "Új út",
-      desc: "Hozz létre egy új utazást, célponttal és dátumokkal.",
-      href: "/trips/new",
-      emoji: "➕",
-    },
-    {
       title: "Utak",
       desc: "Böngészd a már rögzített utazásokat.",
       href: "/trips",
       emoji: "🧭",
-    },
-    {
-      title: "Idővonal",
-      desc: "Évek/hónapok szerint rendezve visszanézheted az utakat.",
-      href: "/timeline",
-      emoji: "🗓️",
-    },
-    {
-      title: "Dokumentumok",
-      desc: "Fotók, bizonylatok, jegyek – egy helyen.",
-      href: "/trips",
-      emoji: "📄",
     },
   ];
 
